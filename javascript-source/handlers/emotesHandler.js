@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +15,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global Packages */
+
 /**
  * emotesHandler.js
  *
@@ -22,7 +24,8 @@
  */
 (function() {
     var emotesRegExpList = [],
-        loaded = false;
+        loaded = false,
+        _lock = new Packages.java.util.concurrent.locks.ReentrantLock();
 
     // Load an existing emote RegExp cache.  Wait to see if there was a problem that needs us to load
     // from cache before doing so.  This saves CPU cycles and memory.
@@ -36,101 +39,97 @@
      * @event emotesGet
      */
     $.bind('emotesGet', function(event) {
-        buildEmotesDB(event.getBttvEmotes(), event.getBttvLocalEmotes(), event.getFfzEmotes(), event.getFfzLocalEmotes());
+        buildEmotesCache(event.getEmotesSet());
     });
 
+    function regexescape(str) {
+        str = $.jsString(str);
+        str = $.replace(str, '(', '\\(');
+        str = $.replace(str, '[', '\\[');
+        str = $.replace(str, ')', '\\)');
+        str = $.replace(str, ']', '\\]');
+        str = $.replace(str, '|', '\\|');
+        str = $.replace(str, '-', '\\-');
+        return str;
+    }
+
     /**
-     * @function buildEmotesDB
-     */
-    function buildEmotesDB(bttvEmotes, bttvLocalEmotes, ffzEmotes, ffzLocalEmotes) {
-        var defaultSets = [],
-            jsonArray = [],
-            currentSet,
-            emote,
-            i, j,
-            emoteRegExp,
-            newEmotesRegExpList = [];
-
-        jsonArray = bttvEmotes.getJSONArray('data');
-        for (i = 0; i < jsonArray.length(); i++) {
-            emote = jsonArray.getJSONObject(i).getString('code');
-
-            // Check for emote at the beginning, middle and end of a string.
-            emoteRegExp = '\\b' + emote + '\\b';
-            newEmotesRegExpList.push(emoteRegExp);
+     * @function buildEmotesCache
+     **/
+    function buildEmotesCache(emoteSets) {
+        // emotesSet: List<EmotesCache.EmotesSet>
+        let newEmotesRegExpList = [];
+        let providerEmoteMap = {};
+        $.consoleDebug("Building Emote cache");
+        for (let i = 0; i < emoteSets.size(); i++){
+            let currentSet = emoteSets.get(i); // EmotesSet
+            let providerEmotes = {
+                local: convertEmoteEntryList(currentSet.getLocalEmotes()),
+                shared: convertEmoteEntryList(currentSet.getSharedEmotes()),
+                global:  convertEmoteEntryList(currentSet.getGlobalEmotes())
+            };
+            providerEmotes.local.concat(providerEmotes.shared, providerEmotes.global).forEach(emote => {
+                newEmotesRegExpList.push('\\b' + regexescape(emote.code) + '\\b');
+            });
+            providerEmoteMap[String(currentSet.getProvider())] = providerEmotes;
+            $.consoleDebug("Loaded Emotes from " + currentSet.getProvider() + ": " + providerEmotes.global.length + " global, " + providerEmotes.shared.length + " shared, " + providerEmotes.local.length + " local");
         }
 
-        if (bttvLocalEmotes.has('channelEmotes')) {
-            jsonArray = bttvLocalEmotes.getJSONArray('channelEmotes');
-            for (i = 0; i < jsonArray.length(); i++) {
-                emote = jsonArray.getJSONObject(i).getString('code');
-
-                // Check for emote at the beginning, middle and end of a string.
-                emoteRegExp = '\\b' + emote + '\\b';
-                newEmotesRegExpList.push(emoteRegExp);
-            }
+        _lock.lock();
+        try {
+            emotesRegExpList = new RegExp(newEmotesRegExpList.join('|'), 'g');
+        } finally {
+            _lock.unlock();
         }
 
-        if (bttvLocalEmotes.has('sharedEmotes')) {
-            jsonArray = bttvLocalEmotes.getJSONArray('sharedEmotes');
-            for (i = 0; i < jsonArray.length(); i++) {
-                emote = jsonArray.getJSONObject(i).getString('code');
-
-                // Check for emote at the beginning, middle and end of a string.
-                emoteRegExp = '\\b' + emote + '\\b';
-                newEmotesRegExpList.push(emoteRegExp);
-            }
-        }
-
-        defaultSets = ffzEmotes.getJSONArray('default_sets');
-        for (i = 0; i < defaultSets.length(); i++) {
-            currentSet = String(defaultSets.getInt(i));
-            jsonArray = ffzEmotes.getJSONObject('sets').getJSONObject(currentSet).getJSONArray('emoticons');
-            for (j = 0; j < jsonArray.length(); j++) {
-                emote = $.replace($.replace($.replace($.replace($.replace(jsonArray.getJSONObject(j).getString('name'), '(', '\\('), ')', '\\)'), '\'', '\\\''), '[', '\\['), ']', '\\]');
-
-                // Check for emote at the beginning, middle and end of a string.
-                emoteRegExp = '\\b' + emote + '\\b';
-                newEmotesRegExpList.push(emoteRegExp);
-            }
-        }
-
-        if (ffzLocalEmotes.has('room')) {
-            currentSet = String(ffzLocalEmotes.getJSONObject('room').getInt('set'));
-            jsonArray = ffzLocalEmotes.getJSONObject('sets').getJSONObject(currentSet).getJSONArray('emoticons');
-            for (i = 0; i < jsonArray.length(); i++) {
-                emote = $.replace($.replace($.replace($.replace($.replace(jsonArray.getJSONObject(i).getString('name'), '(', '\\('), ')', '\\)'), '\'', '\\\''), '[', '\\['), ']', '\\]');
-
-                // Check for emote at the beginning, middle and end of a string.
-                emoteRegExp = '\\b' + emote + '\\b';
-                newEmotesRegExpList.push(emoteRegExp);
-            }
-        }
-
-        emotesRegExpList = new RegExp(newEmotesRegExpList.join('|'), 'g');
         $.inidb.set('emotecache', 'regexp_cache', newEmotesRegExpList.join(','));
+        for (let providerKey in providerEmoteMap){
+            $.inidb.set('emotecache', providerKey + 'Emotes', JSON.stringify(providerEmoteMap[providerKey]));
+        }
 
         loaded = true;
-        $.consoleDebug("Built " + newEmotesRegExpList.length + " regular expressions for emote handling.");
-        newEmotesRegExpList = [];
+
+        var EventBus = Packages.tv.phantombot.event.EventBus;
+        var EmotesCacheUpdatedEvent = Packages.tv.phantombot.event.emotes.EmotesCacheUpdatedEvent;
+        EventBus.instance().post(new EmotesCacheUpdatedEvent(providerEmoteMap));
+    }
+
+    function convertEmoteEntryList(list) {
+        let result = [];
+        if (list != null){
+            for (let i = 0; i < list.size(); i++) {
+                let emote = list.get(i);
+                result.push({
+                    id: String(emote.getId()),
+                    code: String(emote.getCode())
+                });
+            }
+        }
+        return result;
     }
 
     /**
      * @function loadEmoteCache
      */
     function loadEmoteCache() {
-        if (!$.inidb.exists('emotecache', 'regexp_cache')) {
+        let regExpList = $.optIniDbString('emotecache', '', 'regexp_cache');
+        if (!regExpList.isPresent()) {
             return;
         }
 
-        var regExpList = $.inidb.get('emotecache', 'regexp_cache').split(','),
-            newEmotesRegExpList = [];
+        let newEmotesRegExpList = [];
+        regExpList = regExpList.get().split(',');
 
         for (var i = 0; i < regExpList.length; i++) {
             newEmotesRegExpList.push(regExpList[i]);
         }
 
-        emotesRegExpList = new RegExp(newEmotesRegExpList.join('|'), 'g');
+        _lock.lock();
+        try {
+            emotesRegExpList = new RegExp(newEmotesRegExpList.join('|'), 'g');
+        } finally {
+            _lock.unlock();
+        }
 
         loaded = true;
         $.consoleDebug("Built " + newEmotesRegExpList.length + " regular expressions for emote handling from cache.");
@@ -143,7 +142,12 @@
      * @returns {List}{RegExp}
      */
     function getEmotesRegExp() {
-        return emotesRegExpList;
+        _lock.lock();
+        try {
+            return emotesRegExpList;
+        } finally {
+            _lock.unlock();
+        }
     }
 
     /**
@@ -157,7 +161,12 @@
             return 0;
         }
 
-        var matched = message.match(emotesRegExpList);
+        _lock.lock();
+        try {
+            var matched = message.match(emotesRegExpList);
+        } finally {
+            _lock.unlock();
+        }
 
         return (matched !== null ? matched.length : 0);
     }

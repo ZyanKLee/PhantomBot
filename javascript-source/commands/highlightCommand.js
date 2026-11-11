@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,12 +40,13 @@
         /*
          * @commandpath highlight [description] - Marks a highlight using the given description and with the current date stamp
          */
-        if (command.equalsIgnoreCase('highlight')) {
+        if ($.equalsIgnoreCase(command, 'highlight')) {
             if (!$.isOnline($.channelName)) {
                 $.say($.whisperPrefix(sender) + $.lang.get('highlightcommand.highlight.offline'));
                 return;
-            } else if (args.length === 0) {
-                $.say($.whisperPrefix(sender) + $.lang.get('highlightcommand.highlight.usage', $.inidb.exists('settings', 'timezone') ? $.inidb.get('settings', 'timezone') : 'GMT'));
+            }
+            if (args.length === 0) {
+                $.say($.whisperPrefix(sender) + $.lang.get('highlightcommand.highlight.usage', $.getIniDbString('settings', 'timezone', 'GMT')));
                 return;
             }
 
@@ -74,7 +75,7 @@
         /*
          * @commandpath showhighlights - Get a list of current highlights
          */
-        if (command.equalsIgnoreCase('gethighlights') || command.equalsIgnoreCase('showhighlights')) {
+        if ($.equalsIgnoreCase(command, 'gethighlights') || $.equalsIgnoreCase(command, 'showhighlights')) {
             if (!$.inidb.FileExists('highlights')) {
                 $.say($.whisperPrefix(sender) + $.lang.get('highlightcommand.gethighlights.no-highlights'));
                 return;
@@ -84,7 +85,7 @@
                 temp = [];
 
             for (var i in keys) {
-                temp.push('[' + keys[i] + ': ' + $.inidb.get('highlights', keys[i]) + '] ');
+                temp.push('[' + keys[i] + ': ' + $.getIniDbString('highlights', keys[i]) + '] ');
             }
 
             $.paginateArray(temp, 'highlightcommand.highlights', ' ', true, sender);
@@ -94,7 +95,7 @@
         /*
          * @commandpath clearhighlights - Clear the current highlights
          */
-        if (command.equalsIgnoreCase('clearhighlights')) {
+        if ($.equalsIgnoreCase(command, 'clearhighlights')) {
             $.say($.whisperPrefix(sender) + $.lang.get('highlightcommand.clearhighlights.success'));
             $.inidb.RemoveFile('highlights');
             return;
@@ -105,9 +106,9 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./commands/highlightCommand.js', 'highlight', 2);
-        $.registerChatCommand('./commands/highlightCommand.js', 'gethighlights', 2);
-        $.registerChatCommand('./commands/highlightCommand.js', 'showhighlights', 2);
-        $.registerChatCommand('./commands/highlightCommand.js', 'clearhighlights', 1);
+        $.registerChatCommand('./commands/highlightCommand.js', 'highlight', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/highlightCommand.js', 'gethighlights', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/highlightCommand.js', 'showhighlights', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/highlightCommand.js', 'clearhighlights', $.PERMISSION.Admin);
     });
 })();

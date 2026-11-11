@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,16 +15,18 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global Packages */
+
 (function() {
-    var whisperMode = $.getSetIniDbBoolean('settings', 'whisperMode', false),
-        ScriptEventManager = Packages.tv.phantombot.script.ScriptEventManager,
-        CommandEvent = Packages.tv.phantombot.event.command.CommandEvent;
+    let whisperMode = $.getSetIniDbBoolean('settings', 'whisperMode', false),
+        allowNonModWhispers = $.getSetIniDbBoolean('settings', 'allowNonModWhispers', false);
 
     /**
      * @function reloadWhispers
      */
     function reloadWhispers() {
         whisperMode = $.getIniDbBoolean('settings', 'whisperMode');
+        allowNonModWhispers = $.getIniDbBoolean('settings', 'allowNonModWhispers');
     }
 
     /**
@@ -39,7 +41,7 @@
         var i;
 
         for (i in list) {
-            if (list[i][subIndex].equalsIgnoreCase(value)) {
+            if ($.equalsIgnoreCase(list[i][subIndex], value)) {
                 return true;
             }
         }
@@ -55,13 +57,20 @@
      * @returns {string}
      */
     function whisperPrefix(username, force) {
-        if (username.toLowerCase() == $.botName.toLowerCase()) {
-            return ''; 
-        }        
+        if ($.equalsIgnoreCase(username, $.botName)) {
+            return '';
+        }
         if (whisperMode || force) {
             return '/w ' + username + ' ';
         }
-        return '@' + $.username.resolve(username) + ', ';
+        let viewer = $.viewer.getByLogin(username);
+        if (viewer !== null) {
+            let name = viewer.name();
+            if (name !== null) {
+                username = name;
+            }
+        }
+        return '@' + username + ', ';
     }
 
     /**
@@ -84,11 +93,11 @@
             split,
             command;
 
-        if (sender.equalsIgnoreCase('jtv') || sender.equalsIgnoreCase('twitchnotify')) {
+        if ($.equalsIgnoreCase(sender, 'jtv') || $.equalsIgnoreCase(sender, 'twitchnotify')) {
             return;
         }
 
-        if (message.startsWith('!') && $.isMod(sender) && $.userExists(sender)) {
+        if (message.startsWith('!') && (allowNonModWhispers || $.checkUserPermission(sender, event.getTags(), $.PERMISSION.Mod)) && $.userExists(sender)) {
             message = message.substring(1);
             if (message.includes(' ')) {
                 split = message.indexOf(' ');
@@ -98,7 +107,7 @@
                 command = message;
             }
 
-            ScriptEventManager.instance().onEvent(new CommandEvent(sender, command, arguments));
+            $.command.run(sender, command, arguments);
             $.log.file('whispers', '' + sender + ': ' + message);
         }
     });
@@ -113,10 +122,18 @@
         /**
          * @commandpath togglewhispermode - Toggle whisper mode
          */
-        if (command.equalsIgnoreCase('togglewhispermode')) {
+        if ($.equalsIgnoreCase(command, 'togglewhispermode')) {
             whisperMode = !whisperMode;
             $.setIniDbBoolean('settings', 'whisperMode', whisperMode);
             $.say(whisperPrefix(sender) + (whisperMode ? $.lang.get('whisper.whispers.enabled') : $.lang.get('whisper.whispers.disabled')));
+        }
+        /**
+         * @commandpath togglenonmodwhispers - Toggle allowing non-mods to send commands via whisper
+         */
+         else if ($.equalsIgnoreCase(command, 'togglenonmodwhispers')) {
+            allowNonModWhispers = !allowNonModWhispers;
+            $.setIniDbBoolean('settings', 'allowNonModWhispers', allowNonModWhispers);
+            $.say(whisperPrefix(sender) + (allowNonModWhispers ? $.lang.get('whisper.allowNonModWhispers.enabled') : $.lang.get('whisper.allowNonModWhispers.disabled')));
         }
     });
 
@@ -124,7 +141,8 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./core/whisper.js', 'togglewhispermode', 1);
+        $.registerChatCommand('./core/whisper.js', 'togglewhispermode', $.PERMISSION.Admin);
+        $.registerChatCommand('./core/whisper.js', 'togglenonmodwhispers', $.PERMISSION.Admin);
     });
 
     /** Export functions to API */

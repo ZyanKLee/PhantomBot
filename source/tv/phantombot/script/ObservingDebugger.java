@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,7 +40,6 @@ public class ObservingDebugger implements Debugger {
     }
 
     public ObservingDebugger() {
-        Thread.setDefaultUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
     }
 
     @Override
@@ -69,13 +68,12 @@ class ObservingDebugFrame implements DebugFrame {
     }
 
     ObservingDebugFrame(boolean isDisconnected) {
-        Thread.setDefaultUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
         this.isDisconnected = isDisconnected;
     }
 
     @Override
     public void onEnter(Context cx, Scriptable activation,
-                        Scriptable thisObj, Object[] args) {
+            Scriptable thisObj, Object[] args) {
     }
 
     @Override
@@ -91,7 +89,7 @@ class ObservingDebugFrame implements DebugFrame {
 
     @Override
     public void onExit(Context cx, boolean byThrow,
-                       Object resultOrException) {
+            Object resultOrException) {
     }
 
     @Override

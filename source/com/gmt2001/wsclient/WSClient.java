@@ -1,0 +1,288 @@
+/*
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package com.gmt2001.wsclient;
+
+import java.net.URI;
+import java.util.concurrent.TimeUnit;
+
+import javax.net.ssl.SSLException;
+
+import org.json.JSONObject;
+
+import com.gmt2001.dns.CompositeAddressResolverGroup;
+import com.gmt2001.dns.EventLoopDetector;
+import com.gmt2001.wspinger.WSPinger;
+
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.EventLoopGroup;
+import io.netty.handler.codec.http.websocketx.WebSocketCloseStatus;
+import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.resolver.DefaultAddressResolverGroup;
+import tv.phantombot.CaselessProperties;
+
+/**
+ * Provides a WebSocket client
+ *
+ * @author gmt2001
+ */
+public final class WSClient {
+    private static final SslContext DEFAULT_SSL_CTX;
+    static {
+        try {
+            DEFAULT_SSL_CTX = SslContextBuilder.forClient().build();
+        } catch (SSLException e) {
+            throw new RuntimeException("Failed to initialize default SSL context", e);
+        }
+    }
+
+    /**
+     * The URI to connect to
+     */
+    final URI uri;
+    /**
+     * The hostname extracted from the URI
+     */
+    final String host;
+    /**
+     * The port extracted from the URI
+     */
+    final int port;
+    /**
+     * The {@link SslContext}, if this is a wss connection
+     */
+    final SslContext sslCtx;
+    /**
+     * The {@link WsClientFrameHandler} that will receive frames
+     */
+    final WsClientFrameHandler handler;
+    /**
+     * The {@link WebSocketFrameHandler} that will process frames to the handler and provide the communication {@link Channel}
+     */
+    WebSocketFrameHandler frameHandler = null;
+    /**
+     * The {@link WSPinger} that will send PING on an interval, or {@code null} if this is not desired
+     */
+    final WSPinger pinger;
+    /**
+     * The {@link Channel} for the session
+     */
+    private Channel channel = null;
+    /**
+     * The client's {@link EventLoopGroup}
+     */
+    private final EventLoopGroup group = EventLoopDetector.createEventLoopGroup();
+
+    /**
+     * Constructor that does not initialize a {@link WSPinger}
+     *
+     * @param uri The URI to connect to
+     * @param handler An object implementing {@link WsClientFrameHandler} which will receive frames
+     * @throws SSLException Failed to create the {@link SslContext}
+     * @throws IllegalArgumentException URI scheme is not ws or wss
+     */
+    public WSClient(URI uri, WsClientFrameHandler handler) throws SSLException, IllegalArgumentException {
+        this(uri, handler, null);
+    }
+
+    /**
+     * Constructor
+     *
+     * @param uri The URI to connect to
+     * @param handler An object implementing {@link WsClientFrameHandler} which will receive frames
+     * @param pinger The {@link WSPinger} that will send PING on an interval, or {@code null} if this is not desired
+     * @throws SSLException Failed to create the {@link SslContext}
+     * @throws IllegalArgumentException URI scheme is not ws or wss
+     */
+    public WSClient(URI uri, WsClientFrameHandler handler, WSPinger pinger) throws SSLException, IllegalArgumentException {
+        try {
+            this.uri = uri;
+
+            String scheme = uri.getScheme() == null ? "ws" : uri.getScheme();
+
+            if (!"ws".equalsIgnoreCase(scheme) && !"wss".equalsIgnoreCase(scheme)) {
+                throw new IllegalArgumentException("URI Scheme must be ws or wss");
+            }
+
+            this.host = uri.getHost() == null ? "127.0.0.1" : uri.getHost();
+
+            if (uri.getPort() == -1) {
+                if ("ws".equalsIgnoreCase(scheme)) {
+                    this.port = 80;
+                } else if ("wss".equalsIgnoreCase(scheme)) {
+                    this.port = 443;
+                } else {
+                    this.port = -1;
+                }
+            } else {
+                this.port = uri.getPort();
+            }
+
+            this.handler = handler;
+            this.pinger = pinger;
+            if ("wss".equalsIgnoreCase(scheme)) {
+                this.sslCtx = DEFAULT_SSL_CTX;
+            } else {
+                this.sslCtx = null;
+            }
+        } catch (IllegalArgumentException ex) {
+            group.shutdownGracefully();
+            throw ex;
+        }
+    }
+
+    /**
+     * Connects to the server
+     *
+     * @return true if the socket has connected and is starting the handshake; false otherwise
+     * @throws InterruptedException The connection process was interrupted
+     * @throws IllegalStateException Attempting to use a closed client
+     */
+    public boolean connect() throws InterruptedException, IllegalStateException {
+        try {
+            if (this.channel != null) {
+                throw new IllegalStateException("Reusing a closed client");
+            }
+
+            Bootstrap b = new Bootstrap();
+            b.group(this.group);
+
+            if (CaselessProperties.instance().getPropertyAsBoolean("usedefaultdnsresolver", false)) {
+                b.resolver(DefaultAddressResolverGroup.INSTANCE);
+            } else {
+                b.resolver(CompositeAddressResolverGroup.INSTANCE);
+            }
+
+            b.channel(EventLoopDetector.getChannelClass())
+                    .handler(new WSClientInitializer(this));
+
+            this.channel = b.connect(this.host, this.port).sync().channel();
+        } catch (InterruptedException | IllegalStateException ex) {
+            group.shutdownGracefully();
+            throw ex;
+        }
+
+        return this.channel != null;
+    }
+
+    /**
+     * Indicates if the socket is connected.
+     *
+     * NOTE: Only indicates that the socket is ready to send/receive frames. Does not indicate authentication status or anything else
+     *
+     * @return true if the socket is connected and ready to send/receive frames; false otherwise
+     */
+    public boolean connected() {
+        return this.frameHandler != null && this.frameHandler.connected;
+    }
+
+    /**
+     * Retrieves the socket channel
+     *
+     * @return The socket channel if connected; null otherwise
+     */
+    public Channel channel() {
+        return this.channel;
+    }
+
+    /**
+     * Sends a WebSocket frame
+     *
+     * @param frame The frame to send
+     */
+    public void send(WebSocketFrame frame) {
+        WebSocketFrameHandler.sendWsFrame(this.channel(), null, frame);
+    }
+
+    /**
+     * Sends a WebSocket frame of type Text
+     *
+     * @param text The body content of the frame
+     */
+    public void send(String text) {
+        WebSocketFrameHandler.sendWsFrame(this.channel(), null, WebSocketFrameHandler.prepareTextWebSocketResponse(text));
+    }
+
+    /**
+     * Stringifys a {@link JSONObject}, then sends it as a WebSocket frame of type Text
+     *
+     * @param jso The {@link JSONObject} to send
+     */
+    public void send(JSONObject jso) {
+        WebSocketFrameHandler.sendWsFrame(this.channel(), null, WebSocketFrameHandler.prepareTextWebSocketResponse(jso));
+    }
+
+    /**
+     * Sends a WebSocket frame of type Binary
+     *
+     * @param binarydata The binary bytes to send
+     */
+    public void send(byte[] binarydata) {
+        WebSocketFrameHandler.sendWsFrame(this.channel(), null, WebSocketFrameHandler.prepareBinaryWebSocketResponse(binarydata));
+    }
+
+    /**
+     * Sends a WebSocket frame of type Close with a status code of NORMAL_CLOSURE, then closes the socket, with a grace period for ongoing requests to
+     * finish
+     */
+    public void close() {
+        this.close(WebSocketCloseStatus.NORMAL_CLOSURE);
+    }
+
+    /**
+     * Sends a WebSocket frame of type Close, then closes the socket, with a grace period for ongoing requests to finish
+     *
+     * @param status The close status code to send
+     */
+    public void close(WebSocketCloseStatus status) {
+        this.close(WebSocketFrameHandler.prepareCloseWebSocketFrame(status));
+    }
+
+    /**
+     * Sends a WebSocket frame of type Close, then closes the socket, with a grace period for ongoing requests to finish
+     *
+     * @param status The close status code to send
+     * @param reason The reason string to send
+     */
+    public void close(WebSocketCloseStatus status, String reason) {
+        this.close(status.code(), reason);
+    }
+
+    /**
+     * Sends a WebSocket frame of type Close, then closes the socket, with a grace period for ongoing requests to finish
+     *
+     * @param status The close status code to send
+     * @param reason The reason string to send
+     */
+    public void close(int status, String reason) {
+        this.close(WebSocketFrameHandler.prepareCloseWebSocketFrame(status, reason));
+    }
+
+    /**
+     * Sends a WebSocket frame of type Close, then closes the socket, with a grace period for ongoing requests to finish
+     *
+     * @param closeFrame The close frame to send
+     */
+    public void close(WebSocketFrame closeFrame) {
+        com.gmt2001.Console.debug.println("caller " + com.gmt2001.Console.debug.findCallerInfo("com.gmt2001.wsclient.WSClient"));
+        WebSocketFrameHandler.close(this.channel(), closeFrame).awaitUninterruptibly(5, TimeUnit.SECONDS);
+
+        group.shutdownGracefully(3, 5, TimeUnit.SECONDS);
+    }
+}

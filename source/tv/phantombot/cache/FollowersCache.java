@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,164 +16,260 @@
  */
 package tv.phantombot.cache;
 
-import com.gmt2001.TwitchAPIv5;
-import com.gmt2001.datastore.DataStore;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.HashMap;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import com.gmt2001.datastore.DataStore;
+import com.gmt2001.twitch.cache.Viewer;
+import com.gmt2001.twitch.cache.ViewerCache;
+import com.gmt2001.twitch.eventsub.EventSub;
+import com.gmt2001.util.concurrent.ExecutorService;
+
+import reactor.core.publisher.Mono;
+import tv.phantombot.CaselessProperties;
 import tv.phantombot.PhantomBot;
 import tv.phantombot.event.EventBus;
 import tv.phantombot.event.twitch.follower.TwitchFollowEvent;
 import tv.phantombot.event.twitch.follower.TwitchFollowsInitializedEvent;
+import tv.phantombot.twitch.api.Helix;
 
-public class FollowersCache implements Runnable {
+/**
+ * Periodically checks the API for new followers
+ *
+ * @author gmt2001
+ */
+public final class FollowersCache {
 
-    private static final Map<String, FollowersCache> instances = new HashMap<String, FollowersCache>();
-    private final Thread updateThread;
-    private final String channelName;
-    private Date timeoutExpire = new Date();
-    private Date lastFail = new Date();
-    private Boolean firstUpdate = true;
-    private Boolean killed = false;
-    private int numfail = 0;
+    private static final FollowersCache INSTANCE = new FollowersCache();
+    private boolean firstUpdate = true;
+    private final ScheduledFuture<?> update;
+    private final Future<?> fullUpdate;
+    private ScheduledFuture<?> fullUpdateTimeout = null;
+    private int total = 0;
+    private boolean killed = false;
+    private Map<String, Instant> recent = new ConcurrentHashMap<>();
+    private static final long RECENT_TIME_M = 15;
+    private static final long MAX_ANNOUNCE_MINUTES = 30;
 
-    /*
-     * @function instance
-     *
-     * @param  {String} channelName
-     * @return {Object}
-     */
-    public static FollowersCache instance(String channelName) {
-        FollowersCache instance = instances.get(channelName);
-
-        if (instance == null) {
-            instance = new FollowersCache(channelName);
-            instances.put(channelName, instance);
-        }
-        return instance;
+    public static FollowersCache instance() {
+        return INSTANCE;
     }
 
-    /*
-     * @function FollowersCache
-     *
-     * @param {String} channelName
-     */
-    @SuppressWarnings("CallToThreadStartDuringObjectConstruction")
-    private FollowersCache(String channelName) {
-        this.updateThread = new Thread(this, "tv.phantombot.cache.FollowersCache");
-        this.channelName = channelName;
-
-        this.updateThread.setUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
-        Thread.setDefaultUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
-
-        this.updateThread.start();
-    }
-
-    @Override
-    @SuppressWarnings("SleepWhileInLoop")
-    public void run() {
-        try {
-            Thread.sleep(20 * 1000);
-        } catch (InterruptedException ex) {
-            com.gmt2001.Console.err.println("FollowersCache.run: Failed to initial sleep [InterruptedException]: " + ex.getMessage());
-        }
-
-        while (!killed) {
+    private FollowersCache() {
+        this.update = ExecutorService.scheduleAtFixedRate(() -> {
+            com.gmt2001.Console.debug.println("FollowersCache::updateCache");
             try {
-                try {
-                    if (new Date().after(timeoutExpire)) {
-                        updateCache();
-                    }
-                } catch (Exception ex) {
-                    checkLastFail();
-                    com.gmt2001.Console.debug.println("FollowersCache.run: Failed to update followers: " + ex.getMessage());
-                    com.gmt2001.Console.debug.printStackTrace(ex);
-                }
+                this.updateCache(false, null, 0);
             } catch (Exception ex) {
-                com.gmt2001.Console.err.println("FollowersCache.run: Failed to update followers [" + ex.getClass().getSimpleName() + "]: " + ex.getMessage());
+                com.gmt2001.Console.err.printStackTrace(ex);
             }
-
+            Instant now = Instant.now();
+            recent.entrySet().forEach(kv -> {
+                if (kv.getValue().isBefore(now)) {
+                    recent.remove(kv.getKey());
+                }
+            });
+        }, 30, 30, TimeUnit.SECONDS);
+        this.fullUpdate = ExecutorService.submit(() -> {
+            com.gmt2001.Console.debug.println("FollowersCache::fullUpdateCache");
             try {
-                Thread.sleep(30 * 1000);
-            } catch (InterruptedException ex) {
-                com.gmt2001.Console.err.println("FollowersCache.run: Failed to sleep [InterruptedException]: " + ex.getMessage());
+                this.updateCache(true, null, 0);
+            } catch (Exception ex) {
+                com.gmt2001.Console.err.printStackTrace(ex);
             }
-        }
+        });
     }
 
-    /*
-     * @function updateCache
+    /**
+     * @botproperty pullallfollowers - If `true`, pull all followers into the cache on startup; otherwise, only the first 50k. Default `false`
+     * @botpropertycatsort pullallfollowers 300 20 Twitch
      */
-    private void updateCache() throws Exception {
-        com.gmt2001.Console.debug.println("FollowersCache::updateCache");
-        DataStore datastore = PhantomBot.instance().getDataStore();
+    private void updateCache(boolean full, String after, int iteration) {
+        if (after != null && Helix.instance().remainingRateLimit() < (Helix.instance().maxRateLimit() / 2)) {
+            Mono.delay(Duration.ofSeconds(5)).doFinally((sig) -> this.updateCache(full, after, iteration)).subscribe();
+            return;
+        }
 
-        JSONObject jsonObject = TwitchAPIv5.instance().GetChannelFollows(this.channelName, 100, null);
-
-        if (jsonObject.getBoolean("_success")) {
-            if (jsonObject.getInt("_http") == 200) {
-
-                JSONArray jsonArray = jsonObject.getJSONArray("follows");
-
-                for (int i = 0; i < jsonArray.length(); i++) {
-                    String follower = jsonArray.getJSONObject(i).getJSONObject("user").getString("name").toLowerCase();
-                    String followDate = jsonArray.getJSONObject(i).getString("created_at");
-
-                    if (!datastore.exists("followed", follower)) {
-                        EventBus.instance().post(new TwitchFollowEvent(follower, followDate));
-                        datastore.set("followed", follower, "true");
+        Helix.instance().getChannelFollowersAsync(null, 100, after).doOnSuccess(jso -> {
+            if (!jso.has("status")) {
+                this.total = jso.optInt("total");
+                JSONArray jsa = jso.getJSONArray("data");
+                boolean foundFollow = false;
+                DataStore datastore = PhantomBot.instance().getDataStore();
+                for (int i = 0; i < jsa.length(); i++) {
+                    String loginName = jsa.getJSONObject(i).optString("user_login");
+                    String followedAt = jsa.getJSONObject(i).optString("followed_at");
+                    if (full && datastore.exists("followed", loginName)
+                        && datastore.exists("followedDate", loginName)
+                        && datastore.get("followedDate", loginName).equals(followedAt)) {
+                        foundFollow = true;
                     }
+                    this.addFollow(loginName, followedAt, full);
+                }
 
-                    if (!datastore.exists("followedDate", follower)) {
-                        datastore.set("followedDate", follower, followDate);
+                if (full && jso.has("pagination") && !jso.isNull("pagination")) {
+                    String cursor = jso.getJSONObject("pagination").optString("cursor");
+
+                    int target = CaselessProperties.instance().getPropertyAsBoolean("pullallfollowers", false) ? 2 : 1;
+
+                    if (!killed){
+                        if (cursor != null && !cursor.isBlank() && (target > 1 || iteration < 500) &&
+                            (!foundFollow || datastore.GetInteger("settings", "", "FollowersCache.fullUpdateCache") < target)) {
+                            if (iteration == 500) {
+                                datastore.SetInteger("settings", "", "FollowersCache.fullUpdateCache", 1);
+                            }
+                            if (iteration > 0 && iteration % 100 == 0) {
+                                this.fullUpdateTimeout = ExecutorService.schedule(() -> {
+                                    this.updateCache(full, cursor, iteration + 1);
+                                }, 5, TimeUnit.SECONDS);
+                            } else {
+                                this.updateCache(full, cursor, iteration + 1);
+                            }
+                        } else {
+                            datastore.SetInteger("settings", "", "FollowersCache.fullUpdateCache", target);
+                        }
                     }
                 }
-            } else {
-                throw new Exception("[HTTPErrorException] HTTP " + jsonObject.getInt("_http") + " " + jsonObject.getString("error") + ". req="
-                        + jsonObject.getString("_type") + " " + jsonObject.getString("_url") + " " + jsonObject.getString("_post") + "  "
-                        + (jsonObject.has("message") && !jsonObject.isNull("message") ? "message=" + jsonObject.getString("message") : "content=" + jsonObject.getString("_content")));
+
+                if (!full && firstUpdate) {
+                    firstUpdate = false;
+                    EventBus.instance().postAsync(new TwitchFollowsInitializedEvent());
+                }
             }
-        } else if (!jsonObject.getString("_exception").isBlank()) {
-            throw new Exception("[" + jsonObject.getString("_exception") + "] " + jsonObject.getString("_exceptionMessage"));
-        }
+        }).subscribe();
+    }
 
-        if (!killed && firstUpdate) {
-            firstUpdate = false;
-            EventBus.instance().post(new TwitchFollowsInitializedEvent());
+    /**
+     * Adds a follow to the cache, and sends notifications if necessary
+     * @param loginName The login name of the follower
+     * @param followedAt The ISO8601 timestamp when the follow ocurred
+     */
+    public void addFollow(String loginName, ZonedDateTime followedAt) {
+        this.addFollow(loginName, followedAt, false);
+    }
+
+    /**
+     * Adds a follow to the cache, and sends notifications if necessary
+     * @param loginName The login name of the follower
+     * @param followedAt The ISO8601 timestamp when the follow ocurred
+     * @param silent If {@code true}, don't announce the follow
+     */
+    public void addFollow(String loginName, ZonedDateTime followedAt, boolean silent) {
+        this.addFollow(loginName, followedAt.format(DateTimeFormatter.ISO_INSTANT), silent);
+    }
+
+    /**
+     * Adds a follow to the cache, and sends notifications if necessary
+     * @param loginName The login name of the follower
+     * @param followedAt The ISO8601 timestamp when the follow ocurred
+     */
+    public void addFollow(String loginName, String followedAt) {
+        this.addFollow(loginName, followedAt, false);
+    }
+
+    /**
+     * Adds a follow to the cache, and sends notifications if necessary
+     * @param loginName The login name of the follower
+     * @param followedAt The ISO8601 timestamp when the follow ocurred
+     * @param silent If {@code true}, don't announce the follow
+     */
+    public void addFollow(String loginName, String followedAt, boolean silent) {
+        DataStore datastore = PhantomBot.instance().getDataStore();
+        loginName = loginName.toLowerCase();
+        if (!datastore.exists("followedDate", loginName)) {
+            datastore.set("followedDate", loginName, followedAt);
+        }
+        if (!datastore.exists("followed", loginName)) {
+            datastore.set("followed", loginName, "true");
+            if (!silent && !this.recent.containsKey(loginName)
+                && Duration.between(this.followedDate(loginName), ZonedDateTime.now()).abs().toMinutes() < MAX_ANNOUNCE_MINUTES) {
+                this.recent.put(loginName, Instant.now().plus(RECENT_TIME_M, ChronoUnit.MINUTES));
+                EventBus.instance().postAsync(new TwitchFollowEvent(loginName, followedAt));
+            }
         }
     }
 
-    /*
-     * @function checkLastFail
+    /**
+     * Returns the total number of followers, according to Twitch API
+     *
+     * @return
      */
-    private void checkLastFail() {
-        Calendar cal = Calendar.getInstance();
-        numfail = (lastFail.after(new Date()) ? numfail + 1 : 1);
-
-        cal.add(Calendar.MINUTE, 1);
-        lastFail = cal.getTime();
-
-        if (numfail > 5) {
-            timeoutExpire = cal.getTime();
-        }
+    public int total() {
+        return this.total;
     }
 
-    /*
-     * @function kill
+    /**
+     * Indicates if the specified user currently follows the channel
+     *
+     * @param loginName The login name of the user
+     * @return
      */
+    public boolean follows(String loginName) {
+        Viewer user = ViewerCache.instance().getByLogin(loginName);
+
+        if (user == null) {
+            return false;
+        }
+
+        JSONObject jso = Helix.instance().getChannelFollowers(user.id(), 1, null);
+        if (jso != null && !jso.has("status")) {
+            JSONArray jsa = jso.getJSONArray("data");
+            if (jsa.length() > 0) {
+                this.addFollow(jsa.getJSONObject(0).optString("user_login"), jsa.getJSONObject(0).optString("followed_at"));
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Indicates if the specified user has followed at some point in the past, within the limits of the bots records
+     *
+     * @param loginName The login name of the user
+     * @return
+     */
+    public boolean followed(String loginName) {
+        return PhantomBot.instance().getDataStore().exists("followed", loginName);
+    }
+
+    /**
+     * Indicates the earliest timestamp when the bot is aware of the specified user following as a string
+     *
+     * @param loginName The login name of the user
+     * @return
+     */
+    public String followedDateString(String loginName) {
+        return PhantomBot.instance().getDataStore().get("followedDate", loginName);
+    }
+
+    /**
+     * Indicates the earliest timestamp when the bot is aware of the specified user following
+     *
+     * @param loginName The login name of the user
+     * @return
+     */
+    public ZonedDateTime followedDate(String loginName) {
+        return EventSub.parseDate(this.followedDateString(loginName));
+    }
+
     public void kill() {
         this.killed = true;
-    }
-
-    /*
-     * @function killall
-     */
-    public static void killall() {
-        instances.values().forEach(instance -> {
-            instance.kill();
-        });
+        this.update.cancel(false);
+        this.fullUpdate.cancel(false);
+        if (this.fullUpdateTimeout != null) {
+            this.fullUpdateTimeout.cancel(false);
+        }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,11 +16,14 @@
  */
 package com.gmt2001.Console;
 
-import com.gmt2001.Logger;
-import com.gmt2001.RollbarProvider;
+import com.illusionaryone.Logger;
+import com.gmt2001.util.LogFilter;
+
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.util.HashMap;
 import java.util.Map;
 import tv.phantombot.PhantomBot;
 
@@ -30,12 +33,7 @@ public final class warn {
     }
 
     public static void print(Object o) {
-        String stackInfo;
-        StackTraceElement st = debug.findCaller();
-
-        stackInfo = "[" + st.getMethodName() + "()@" + st.getFileName() + ":" + st.getLineNumber() + "] ";
-
-        Logger.instance().log(Logger.LogType.Warning, "[" + logTimestamp.log() + "] " + stackInfo + o.toString());
+        Logger.instance().log(Logger.LogType.Warning, "[" + logTimestamp.log() + "] " + debug.findCallerInfo() + " " + o.toString());
         System.out.print("[" + logTimestamp.log() + "] [WARN] " + o);
     }
 
@@ -49,23 +47,21 @@ public final class warn {
     }
 
     public static void println(Object o) {
-        String stackInfo;
-        StackTraceElement st = debug.findCaller();
-
-        stackInfo = "[" + st.getMethodName() + "()@" + st.getFileName() + ":" + st.getLineNumber() + "] ";
-
-        Logger.instance().log(Logger.LogType.Warning, "[" + logTimestamp.log() + "] " + stackInfo + o.toString());
-        Logger.instance().log(Logger.LogType.Warning, "");
-        System.out.println("[" + logTimestamp.log() + "] [WARN] " + stackInfo + o.toString());
+        println(o, false);
     }
 
-    public static void println(Object o, Boolean logOnly) {
-        String stackInfo;
-        StackTraceElement st = debug.findCaller();
+    public static void println(Object o, boolean logOnly) {
+        println(o, logOnly, LogFilter.filter(o.toString()));
+    }
 
-        stackInfo = "[" + st.getMethodName() + "()@" + st.getFileName() + ":" + st.getLineNumber() + "] ";
+    public static void println(Object o, String log) {
+        println(o, false, log);
+    }
 
-        Logger.instance().log(Logger.LogType.Warning, "[" + logTimestamp.log() + "] " + stackInfo + o.toString());
+    public static void println(Object o, boolean logOnly, Object log) {
+        String stackInfo = debug.findCallerInfo() + " ";
+
+        Logger.instance().log(Logger.LogType.Warning, "[" + logTimestamp.log() + "] " + stackInfo + log.toString());
         Logger.instance().log(Logger.LogType.Warning, "");
         if (!logOnly) {
             System.out.println("[" + logTimestamp.log() + "] [WARN] " + stackInfo + o.toString());
@@ -113,14 +109,31 @@ public final class warn {
     }
 
     public static void logStackTrace(Throwable e, Map<String, Object> custom, String description) {
-        RollbarProvider.instance().warning(e, custom, description);
+        if (custom == null) {
+            custom = new HashMap<>();
+        }
 
-        Writer trace = new StringWriter();
-        PrintWriter ptrace = new PrintWriter(trace);
+        String stackInfo = debug.findCallerInfo();
 
-        e.printStackTrace(ptrace);
+        try {
+            custom.putIfAbsent("__caller", stackInfo);
+        } catch (UnsupportedOperationException ex) {
+            Map<String, Object> oldCustom = custom;
+            custom = new HashMap<>(oldCustom);
+            custom.putIfAbsent("__caller", stackInfo);
+        }
 
-        Logger.instance().log(Logger.LogType.Warning, "[" + logTimestamp.log() + "] " + trace.toString());
-        Logger.instance().log(Logger.LogType.Warning, "");
+        try ( Writer trace = new StringWriter()) {
+            try ( PrintWriter ptrace = new PrintWriter(trace)) {
+
+                e.printStackTrace(ptrace);
+
+                Logger.instance().log(Logger.LogType.Warning, "[" + logTimestamp.log() + "] " + stackInfo);
+                Logger.instance().log(Logger.LogType.Warning, trace.toString());
+                Logger.instance().log(Logger.LogType.Warning, "");
+            }
+        } catch (IOException ex) {
+            err.printStackTrace(ex);
+        }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +15,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global Packages */
+
 /**
  * followHandler.js
  *
@@ -28,79 +30,155 @@
  *
  */
 
-function alertFollow(announceFollows, followToggle, s, follower, followReward, followQueue) {
-    if (announceFollows === true && followToggle === true) {
-        if (s.match(/\(name\)/)) {
-            s = $.replace(s, '(name)', $.username.resolve(follower));
-        }
-
-        if (s.match(/\(reward\)/)) {
-            s = $.replace(s, '(reward)', $.getPointsString(followReward));
-        }
-
-        if (s.match(/^\/w/)) {
-            s = s.replace('/w', ' /w');
-        }
-
-        followQueue.add(s);
-
-        if (followReward > 0) {
-            $.inidb.incr('points', follower, followReward);
-        }
-
-        $.writeToFile(follower + ' ', './addons/followHandler/latestFollower.txt', false);
-        $.inidb.set('streamInfo', 'lastFollow', follower);
-    }
-}
-
 (function () {
-    var followToggle = $.getSetIniDbBoolean('settings', 'followToggle', false),
+    let followToggle = $.getSetIniDbBoolean('settings', 'followToggle', false),
             followReward = $.getSetIniDbNumber('settings', 'followReward', 0),
             followMessage = $.getSetIniDbString('settings', 'followMessage', $.lang.get('followhandler.follow.message')),
-            followDelay = $.getSetIniDbNumber('settings', 'followDelay', 5),
-            followQueue = new java.util.concurrent.ConcurrentLinkedQueue,
-            lastFollow = $.systemTime(),
-            announceFollows = false;
+            followDelay = $.getSetIniDbNumber('settings', 'followDelay', 5) * 1e3,
+            followQueue = new Packages.java.util.concurrent.ConcurrentLinkedQueue,
+            announceFollows = false,
+            timeout = -1;
+
+    $.bind('eventSubChannelFollow', function (event) {
+        if ($.jsString(event.event().broadcasterUserId()) === $.jsString($.viewer.broadcaster().id())) {
+            $.followers.addFollow(event.event().userLogin(), event.event().followedAtString());
+        }
+    }, true);
+
+    function subscribeEventSub() {
+        let subscriptions = [
+            Packages.com.gmt2001.twitch.eventsub.subscriptions.channel.ChannelFollow
+        ];
+
+        for (let i in subscriptions) {
+            let newSubscription = new subscriptions[i]($.viewer.broadcaster().id());
+            try {
+                newSubscription.create().block();
+            } catch (ex) {
+                $.log.error(ex);
+            }
+        }
+    }
+
+    setInterval(function(){
+        if (Packages.com.gmt2001.twitch.eventsub.EventSub.instance().sessionId() !== null) {
+            subscribeEventSub();
+        }
+    }, 60 * 60 * 1000);
 
     /*
+     * @event eventSubWelcome
+     */
+    $.bind('eventSubWelcome', function (event) {
+        if (!event.isReconnect()) {
+            subscribeEventSub();
+        }
+    }, true);
+
+    /**
      * @function updateFollowConfig
      */
     function updateFollowConfig() {
         followReward = $.getIniDbNumber('settings', 'followReward');
         followMessage = $.getIniDbString('settings', 'followMessage');
         followToggle = $.getIniDbBoolean('settings', 'followToggle');
-        followDelay = $.getIniDbNumber('settings', 'followDelay');
+        followDelay = $.getIniDbNumber('settings', 'followDelay') * 1e3;
     }
 
-    /*
-     * @function runFollows
-     */
-    function runFollows() {
-        if (!followQueue.isEmpty() && (lastFollow + (followDelay * 1e3)) < $.systemTime()) {
-            var s = followQueue.poll();
-            if (s.match(/\(alert [,.\w\W]+\)/g)) {
-                var filename = s.match(/\(alert ([,.\w\W]+)\)/)[1];
-                $.alertspollssocket.alertImage(filename);
-                s = (s + '').replace(/\(alert [,.\w\W]+\)/, '');
-            }
+    function alertFollow(follower, replay) {
+        if (announceFollows && followToggle) {
+            let message = followMessage;
 
-            if (s.match(/\(playsound\s([a-zA-Z1-9_]+)\)/g)) {
-                if (!$.audioHookExists(s.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1])) {
-                    $.log.error('Could not play audio hook: Audio hook does not exist.');
-                    return null;
+            if (message.match(/\(name\)/)) {
+                let name = $.viewer.getByLogin(follower);
+                if (name !== null) {
+                    try {
+                        name = name.name();
+                    } catch (e) {
+                        name = follower;
+                    }
+                } else {
+                    name = follower;
                 }
-                $.alertspollssocket.triggerAudioPanel(s.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1]);
-                s = $.replace(s, s.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[0], '');
+                message = $.replace(message, '(name)', name);
             }
 
-            if (s != '') {
-                $.say(s);
+            if (message.match(/\(reward\)/)) {
+                message = $.replace(message, '(reward)', $.getPointsString(followReward));
             }
-            lastFollow = $.systemTime();
+
+            if (message.match(/^\/w/)) {
+                message = message.replace('/w', ' /w');
+            }
+
+            let el = {
+                imageAlert: null,
+                message: null,
+                audioHook:  null
+            };
+
+            if (message.match(/\(alert [,.\w\W]+\)/g)) {
+                el.imageAlert = message.match(/\(alert ([,.\w\W]+)\)/)[1];
+                message = (message + '').replace(/\(alert [,.\w\W]+\)/, '');
+            }
+
+            if (message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/g)) {
+                if (!$.audioHookExists(message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1])) {
+                    $.log.error('Cannot play audio hook for follower: Audio hook does not exist.');
+                } else {
+                    el.audioHook = message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1];
+                }
+
+                message = $.replace(message, message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[0], '');
+            }
+
+            if (message !== '') {
+                el.message = message;
+            }
+
+            followQueue.add(el);
+
+            if (timeout === -1) {
+                timeout = runFollows();
+            }
+
+            if (followReward > 0 && !replay) {
+                $.inidb.incr('points', follower, followReward);
+            }
+
+            $.writeToFile(follower + ' ', './addons/followHandler/latestFollower.txt', false);
+            $.inidb.set('streamInfo', 'lastFollow', follower);
         }
     }
 
-    /*
+    /**
+     * @function runFollows
+     */
+    function runFollows() {
+        if (followQueue.isEmpty()) {
+            clearTimeout(timeout);
+            timeout = -1;
+            return;
+        }
+
+        let s = followQueue.poll();
+
+        if (s.message !== null) {
+            $.say(s.message);
+        }
+
+        if (s.imageAlert !== null) {
+            $.alertspollssocket.alertImage(s.imageAlert);
+        }
+
+        if (s.audioHook !== null) {
+            $.alertspollssocket.triggerAudioPanel(s.audioHook);
+        }
+
+        timeout = setTimeout(runFollows, followDelay, 'scripts::handlers::followHandler.js');
+    }
+
+    /**
      * @event twitchFollowsInitialized
      */
     $.bind('twitchFollowsInitialized', function () {
@@ -109,27 +187,28 @@ function alertFollow(announceFollows, followToggle, s, follower, followReward, f
         announceFollows = true;
     });
 
-    /*
+    /**
      * @event twitchFollow
      */
     $.bind('twitchFollow', function (event) {
-        var follower = event.getFollower();
-        alertFollow(announceFollows, followToggle, followMessage, follower, followReward, followQueue);
+        let follower = event.getFollower();
+
+        alertFollow(follower, false);
     });
 
-    /*
+    /**
      * @event command
      */
     $.bind('command', function (event) {
-        var sender = event.getSender(),
+        let sender = event.getSender(),
                 command = event.getCommand(),
                 args = event.getArgs(),
                 action = args[0];
 
-        /*
+        /**
          * @commandpath followreward [amount] - Set the points reward for following
          */
-        if (command.equalsIgnoreCase('followreward')) {
+        if ($.equalsIgnoreCase(command, 'followreward')) {
             if (isNaN(parseInt(action))) {
                 $.say($.whisperPrefix(sender) + $.lang.get('followhandler.set.followreward.usage', $.pointNameMultiple, followReward));
                 return;
@@ -140,10 +219,10 @@ function alertFollow(announceFollows, followToggle, s, follower, followReward, f
             $.say($.whisperPrefix(sender) + $.lang.get('followhandler.set.followreward.success', $.getPointsString(followReward)));
         }
 
-        /*
+        /**
          * @commandpath followmessage [message] - Set the new follower message when there is a reward
          */
-        if (command.equalsIgnoreCase('followmessage')) {
+        if ($.equalsIgnoreCase(command, 'followmessage')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('followhandler.set.followmessage.usage'));
                 return;
@@ -154,33 +233,33 @@ function alertFollow(announceFollows, followToggle, s, follower, followReward, f
             $.say($.whisperPrefix(sender) + $.lang.get('followhandler.set.followmessage.success', followMessage));
         }
 
-        /*
+        /**
          * @commandpath followdelay [message] - Set the delay in seconds between follow announcements
          */
-        if (command.equalsIgnoreCase('followdelay')) {
+        if ($.equalsIgnoreCase(command, 'followdelay')) {
             if (isNaN(parseInt(action)) || parseInt(action) < 5) {
                 $.say($.whisperPrefix(sender) + $.lang.get('followhandler.set.followdelay.usage'));
                 return;
             }
 
-            followDelay = parseInt(action);
+            followDelay = parseInt(action) * 1e3;
             $.inidb.set('settings', 'followDelay', followDelay);
             $.say($.whisperPrefix(sender) + $.lang.get('followhandler.set.followdelay.success', followDelay));
         }
 
-        /*
+        /**
          * @commandpath followtoggle - Enable or disable the anouncements for new followers
          */
-        if (command.equalsIgnoreCase('followtoggle')) {
+        if ($.equalsIgnoreCase(command, 'followtoggle')) {
             followToggle = !followToggle;
             $.setIniDbBoolean('settings', 'followToggle', followToggle);
             $.say($.whisperPrefix(sender) + (followToggle ? $.lang.get('followhandler.followtoggle.on') : $.lang.get('followhandler.followtoggle.off')));
         }
 
-        /*
+        /**
          * @commandpath checkfollow [username] - Check if a user is following the channel
          */
-        if (command.equalsIgnoreCase('checkfollow')) {
+        if ($.equalsIgnoreCase(command, 'checkfollow')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('followhandler.check.usage'));
                 return;
@@ -189,35 +268,34 @@ function alertFollow(announceFollows, followToggle, s, follower, followReward, f
             action = $.user.sanitize(action);
 
             if ($.user.isFollower(action)) {
-                $.say($.lang.get('followhandler.check.follows', $.username.resolve(action)));
+                $.say($.lang.get('followhandler.check.follows', $.viewer.getByLogin(action).name()));
             } else {
-                $.say($.lang.get('followhandler.check.notfollows', $.username.resolve(action)));
+                $.say($.lang.get('followhandler.check.notfollows', $.viewer.getByLogin(action).name()));
             }
         }
 
-        /*
+        /**
          * @commandpath replayfollow [username] - Replays the follow message for username
          */
-        if (command.equalsIgnoreCase('replayfollow')) {
+        if ($.equalsIgnoreCase(command, 'replayfollow')) {
             if (action === undefined) {
                 return;
             }
-            alertFollow(announceFollows, followToggle, followMessage, action, followReward, followQueue);
+
+            alertFollow(action, true);
         }
     });
 
-    /*
+    /**
      * @event initReady
      */
     $.bind('initReady', function () {
-        $.registerChatCommand('./handlers/followHandler.js', 'followreward', 1);
-        $.registerChatCommand('./handlers/followHandler.js', 'followtoggle', 1);
-        $.registerChatCommand('./handlers/followHandler.js', 'followdelay', 1);
-        $.registerChatCommand('./handlers/followHandler.js', 'followmessage', 1);
-        $.registerChatCommand('./handlers/followHandler.js', 'checkfollow', 2);
-        $.registerChatCommand('./handlers/followHandler.js', 'replayfollow', 1);
-
-        setInterval(runFollows, 2e3, 'scripts::handlers::followHandler.js');
+        $.registerChatCommand('./handlers/followHandler.js', 'followreward', $.PERMISSION.Admin);
+        $.registerChatCommand('./handlers/followHandler.js', 'followtoggle', $.PERMISSION.Admin);
+        $.registerChatCommand('./handlers/followHandler.js', 'followdelay', $.PERMISSION.Admin);
+        $.registerChatCommand('./handlers/followHandler.js', 'followmessage', $.PERMISSION.Admin);
+        $.registerChatCommand('./handlers/followHandler.js', 'checkfollow', $.PERMISSION.Mod);
+        $.registerChatCommand('./handlers/followHandler.js', 'replayfollow', $.PERMISSION.Admin);
     });
 
     $.updateFollowConfig = updateFollowConfig;

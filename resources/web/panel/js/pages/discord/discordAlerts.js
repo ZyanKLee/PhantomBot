@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,24 +15,31 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global toastr */
+
 // Main function that gets all of our data.
 $(function () {
+    if (helpers.currentPanelUserData.userType !== 'CONFIG') {
+        $('[data-removeForNonConfigUser="true"]').remove();
+    }
+
     // Get all module toggles.
     socket.getDBValues('alerts_get_modules', {
-        tables: ['modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules'],
-        keys: ['./discord/handlers/followHandler.js', './discord/handlers/subscribeHandler.js', './discord/handlers/hostHandler.js',
+        tables: ['modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules', 'modules'],
+        keys: ['./discord/handlers/followHandler.js', './discord/handlers/subscribeHandler.js',
             './discord/handlers/bitsHandler.js', './discord/handlers/clipHandler.js', './discord/systems/greetingsSystem.js', './discord/handlers/streamlabsHandler.js',
             './discord/handlers/raidHandler.js', './discord/handlers/tipeeeStreamHandler.js', './discord/handlers/streamElementsHandler.js',
-            './discord/handlers/twitterHandler.js', './discord/handlers/streamHandler.js']
+            './discord/handlers/streamHandler.js', './discord/handlers/blueskyHandler.js']
     }, true, function (e) {
         // Handle the settings button.
         let keys = Object.keys(e),
                 module = '',
                 i;
         for (i = 0; i < keys.length; i++) {
-            module = keys[i].substring(keys[i].lastIndexOf('/') + 1).replace('.js', '');
             // Handle the status of the buttons.
-            if (e[keys[i]] === 'false') {
+            if (!helpers.isTrue(e[keys[i]])) {
+                module = keys[i].substring(keys[i].lastIndexOf('/') + 1).replace('.js', '');
+
                 // Handle the switch.
                 $('#' + module + 'Toggle').prop('checked', false);
                 // Handle the settings button.
@@ -46,18 +53,28 @@ $(function () {
 $(function () {
     let discordChannels = null;
     let allowedChannelTypes = ['GUILD_NEWS', 'GUILD_TEXT'];
+    let callback = null;
 
-    function refreshChannels() {
+    function refreshChannels(oncomplete) {
+        callback = oncomplete;
         socket.getDiscordChannelList('discord_alerts_getchannels', function (d) {
             discordChannels = d.data;
+            if (callback !== undefined && callback !== null) {
+                callback();
+            }
         });
     }
 
-    function getChannelSelector(id, title, placeholder, value, tooltip, allowedChannelTypes) {
+    function getChannelSelector(id, title, placeholder, value, tooltip, allowedChannelTypes, emptyOptionName) {
         if (discordChannels === null) {
             return helpers.getInputGroup(id, 'text', title, placeholder, value, tooltip);
         } else {
             let data = [];
+
+            // An optional first choice that saves an empty value, such as "Same as the default channel"
+            if (emptyOptionName !== undefined) {
+                data.push({title: '', options: [{'name': emptyOptionName, 'value': '', 'selected': value === ''}]});
+            }
 
             for (const [category, channels] of Object.entries(discordChannels)) {
                 let entry = {};
@@ -85,6 +102,9 @@ $(function () {
     }
 
     function discordChannelTemplate(fchannel) {
+        if (discordChannels === undefined || discordChannels === null) {
+            return $('<span><i class="fa fa-triangle-exclamation fa-lg" style="margin-right: 5px;" /> Unable retrieve channel list</span>');
+        }
         if (fchannel.id) {
             for (const [category, channels] of Object.entries(discordChannels)) {
                 for (const [channel, info] of Object.entries(channels)) {
@@ -135,7 +155,7 @@ $(function () {
                 'role': 'form'
             })
                     // Add the toggle for follow alerts.
-                    .append(helpers.getDropdownGroup('follow-toggle', 'Enable Follow Alerts', (e.followToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                    .append(helpers.getDropdownGroup('follow-toggle', 'Enable Follow Alerts', (helpers.isTrue(e.followToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                             'If a message should be said in the channel when someone follows.'))
                     // Add the the text area for the follow message.
                     .append(helpers.getTextAreaGroup('follow-message', 'text', 'Follow Message', '', e.followMessage,
@@ -169,11 +189,11 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-
-                if (discordChannels !== null) {
-                    $('#follow-channel').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#follow-channel').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
@@ -197,7 +217,7 @@ $(function () {
                                 'role': 'form'
                             })
                                     // Add toggle for normal subscriptions.
-                                    .append(helpers.getDropdownGroup('sub-toggle', 'Enable Subscription Alerts', (e.subToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('sub-toggle', 'Enable Subscription Alerts', (helpers.isTrue(e.subToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in a channel when someone subscribes.'))
                                     // Append message box for the message
                                     .append(helpers.getTextAreaGroup('sub-msg', 'text', 'Subscription Message', '', e.subMessage,
@@ -207,7 +227,7 @@ $(function () {
                                 'role': 'form'
                             })
                                     // Add toggle for prime subscriptions.
-                                    .append(helpers.getDropdownGroup('primesub-toggle', 'Enable Prime Subscription Alerts', (e.primeToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('primesub-toggle', 'Enable Prime Subscription Alerts', (helpers.isTrue(e.primeToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in the channel when someone subscribes with Twitch Prime.'))
                                     // Append message box for the message
                                     .append(helpers.getTextAreaGroup('primesub-msg', 'text', 'Prime Subscription Message', '', e.primeMessage,
@@ -217,7 +237,7 @@ $(function () {
                                 'role': 'form'
                             })
                                     // Add toggle for resubscriptions.
-                                    .append(helpers.getDropdownGroup('resub-toggle', 'Enable Re-subscription Alerts', (e.resubToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('resub-toggle', 'Enable Re-subscription Alerts', (helpers.isTrue(e.resubToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in the channel when someone resubscribes.'))
                                     // Append message box for the message
                                     .append(helpers.getTextAreaGroup('resub-msg', 'text', 'Re-subscription Message', '', e.resubMessage,
@@ -227,7 +247,7 @@ $(function () {
                                 'role': 'form'
                             })
                                     // Add toggle for gifted subscriptions.
-                                    .append(helpers.getDropdownGroup('gifsub-toggle', 'Enable Gifted Subscription Alerts', (e.giftsubToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('gifsub-toggle', 'Enable Gifted Subscription Alerts', (helpers.isTrue(e.giftsubToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in the channel when someone gifts a subscription. This also toggles the reward.'))
                                     // Append message box for the message
                                     .append(helpers.getTextAreaGroup('gifsub-msg', 'text', 'Gifted Subscription Message', '', e.giftsubMessage,
@@ -273,66 +293,11 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#channel-alert').select2({ templateResult: discordChannelTemplate });
-                }
-            }).modal('toggle');
-        });
-    });
-
-    // Host settings button.
-    $('#discordHostHandlerSettings').on('click', function () {
-        socket.getDBValues('alerts_get_host_settings', {
-            tables: ['discordSettings', 'discordSettings', 'discordSettings'],
-            keys: ['hostToggle', 'hostMessage', 'hostChannel']
-        }, true, function (e) {
-            helpers.getModal('host-alert', 'Host Alert Settings', 'Save', $('<form/>', {
-                'role': 'form'
-            })
-                    // Add the div for the col boxes.
-                    .append($('<div/>', {
-                        'class': 'panel-group',
-                        'id': 'accordion'
-                    })
-                            // Add the toggle for host alerts.
-                            .append(helpers.getDropdownGroup('host-toggle', 'Enable Host Alerts', (e.hostToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
-                                    'If a message should be said in the channel when someone follows.'))
-                            // Add the the text area for the host message.
-                            .append(helpers.getTextAreaGroup('host-message', 'text', 'Host Message', '', e.hostMessage,
-                                    'Message said when someone hosts the channel. Tag: (name) and (viewers)', false))
-                            // Add the the box for the reward.
-                            .append(getChannelSelector('host-channel', 'Alert Channel', '#alerts', e.hostChannel,
-                                    'Channel where all alerts should go to.', allowedChannelTypes))),
-                    function () { // Callback once the user clicks save.
-                        let hostToggle = $('#host-toggle').find(':selected').text() === 'Yes',
-                                hostMsg = $('#host-message'),
-                                hostChannel = $('#host-channel');
-
-                        // Make sure the user has someone in each box.
-                        switch (false) {
-                            case helpers.handleInputString(hostMsg):
-                                break;
-                            default:
-                                socket.updateDBValues('alerts_update_host_settings', {
-                                    tables: ['discordSettings', 'discordSettings', 'discordSettings'],
-                                    keys: ['hostToggle', 'hostMessage', 'hostChannel'],
-                                    values: [hostToggle, hostMsg.val(), hostChannel.val()]
-                                }, function () {
-                                    socket.wsEvent('discord', './discord/handlers/hostHandler.js', '', [], function () {
-                                        // Close the modal.
-                                        $('#host-alert').modal('toggle');
-                                        // Alert the user.
-                                        toastr.success('Successfully updated host alert settings!');
-                                    });
-                                });
-                        }
-
-                    }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#host-channel').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#channel-alert').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
@@ -347,7 +312,7 @@ $(function () {
                 'role': 'form'
             })
                     // Add the toggle for bits alerts.
-                    .append(helpers.getDropdownGroup('bits-toggle', 'Enable Bits Alerts', (e.bitsToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                    .append(helpers.getDropdownGroup('bits-toggle', 'Enable Bits Alerts', (helpers.isTrue(e.bitsToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                             'If a message should be said in the channel when someone cheers.'))
                     // Add the the text area for the bits message.
                     .append(helpers.getTextAreaGroup('bits-message', 'text', 'Bits Message', '', e.bitsMessage,
@@ -379,10 +344,11 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#bits-channel').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#bits-channel').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
@@ -397,7 +363,7 @@ $(function () {
                 'role': 'form'
             })
                     // Add the toggle for clip alerts.
-                    .append(helpers.getDropdownGroup('clip-toggle', 'Enable Clip Alerts', (e.clipsToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                    .append(helpers.getDropdownGroup('clip-toggle', 'Enable Clip Alerts', (helpers.isTrue(e.clipsToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                             'If a message should be said in the channel when someone creates a clip.'))
                     // Add the text area for the clips message.
                     .append(helpers.getTextAreaGroup('clip-message', 'text', 'Clip Message', '', e.clipsMessage,
@@ -429,10 +395,11 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#clip-channel').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#clip-channel').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
@@ -440,11 +407,12 @@ $(function () {
     // Stream Alert settings.
     $('#discordStreamHandlerSettings').on('click', function () {
         socket.getDBValues('alerts_get_stream_settings', {
-            tables: ['discordSettings', 'discordSettings', 'discordSettings', 'discordSettings',
-                'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings',
-                'discordSettings'],
-            keys: ['onlineToggle', 'onlineMessage', 'offlineToggle', 'offlineMessage',
-                'gameToggle', 'gameMessage', 'botGameToggle', 'onlineChannel', 'deleteMessageToggle']
+            tables: ['discordSettings', 'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings',
+                'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings',
+                'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings'],
+            keys: ['onlineToggle', 'onlinePublish', 'onlineMessage', 'offlineToggle', 'offlinePublish', 'offlineMessage',
+                'gameToggle', 'gamePublish', 'gameMessage', 'botGameToggle', 'onlineChannel', 'deleteMessageToggle',
+                'onlineDelay', 'offlineDelay']
         }, true, function (e) {
             helpers.getModal('stream-alert', 'Stream Alert Settings', 'Save', $('<form/>', {
                 'role': 'form'
@@ -459,31 +427,41 @@ $(function () {
                                 'role': 'form'
                             })
                                     // Add the toggle for online alerts.
-                                    .append(helpers.getDropdownGroup('online-toggle', 'Enable Online Alerts', (e.onlineToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('online-toggle', 'Enable Online Alerts', (helpers.isTrue(e.onlineToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in the channel when you go live on Twitch.'))
+                                    .append(helpers.getDropdownGroup('online-publish', 'Publish Online Alerts', (helpers.isTrue(e.onlinePublish) ? 'Yes' : 'No'), ['Yes', 'No'],
+                                            'If the message is posted to a Discord Announcement channel, attempts to publish it to subscribers.'))
                                     // Add the toggle for auto bot streaming status
-                                    .append(helpers.getDropdownGroup('online-status', 'Enable Bot Status', (e.botGameToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('online-status', 'Enable Bot Status', (helpers.isTrue(e.botGameToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'Show your bot as streaming when you go live.'))
                                     // Add the text area for the online message.
                                     .append(helpers.getTextAreaGroup('online-message', 'text', 'Online Message', '', e.onlineMessage,
-                                            'Message said when you go live. This message is in an embed style. Tags: (name)', false))))
+                                            'Message said when you go live. This message is in an embed style. Tags: (name)', false))
+                                    .append(helpers.getInputGroup('online-delay', 'number', 'Online Delay', '', e.onlineDelay,
+                                            'The number of seconds the bot waits before posting the online message to Discord. Lower times could result in old or missing thumbnails'))))
                             // Append second collapsible accordion.
                             .append(helpers.getCollapsibleAccordion('main-2', 'Offline Settings', $('<form/>', {
                                 'role': 'form'
                             })
                                     // Add the toggle for offline alerts.
-                                    .append(helpers.getDropdownGroup('offline-toggle', 'Enable Offline Alerts', (e.offlineToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('offline-toggle', 'Enable Offline Alerts', (helpers.isTrue(e.offlineToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in the channel when you go offline on Twitch.'))
+                                    .append(helpers.getDropdownGroup('offline-publish', 'Publish Offline Alerts', (helpers.isTrue(e.offlinePublish) ? 'Yes' : 'No'), ['Yes', 'No'],
+                                            'If the message is posted to a Discord Announcement channel, attempts to publish it to subscribers.'))
                                     // Add the text area for the offline message.
                                     .append(helpers.getTextAreaGroup('offline-message', 'text', 'Offline Message', '', e.offlineMessage,
-                                            'Message said when you go offline. This message is in an embed style. Tags: (name)', false))))
+                                            'Message said when you go offline. This message is in an embed style. Tags: (name)', false))
+                                    .append(helpers.getInputGroup('offline-delay', 'number', 'Offline Delay', '', e.offlineDelay,
+                                            'The number of seconds the bot waits before posting the offline message to Discord. Lower times could result in old or missing thumbnails'))))
                             // Append third collapsible accordion.
                             .append(helpers.getCollapsibleAccordion('main-3', 'Game Change Settings', $('<form/>', {
                                 'role': 'form'
                             })
                                     // Add the toggle for offline alerts.
-                                    .append(helpers.getDropdownGroup('game-toggle', 'Enable Game Change Alerts', (e.gameToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('game-toggle', 'Enable Game Change Alerts', (helpers.isTrue(e.gameToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in the channel when you switch games on Twitch.'))
+                                    .append(helpers.getDropdownGroup('game-publish', 'Publish Game Change Alerts', (helpers.isTrue(e.gamePublish) ? 'Yes' : 'No'), ['Yes', 'No'],
+                                            'If the message is posted to a Discord Announcement channel, attempts to publish it to subscribers.'))
                                     // Add the text area for the offline message.
                                     .append(helpers.getTextAreaGroup('game-message', 'text', 'Game Change Message', '', e.gameMessage,
                                             'Message said when you change games on Twitch. Tags: (name)', false))))
@@ -495,33 +473,42 @@ $(function () {
                                     .append(getChannelSelector('channel-alert', 'Alert Channel', '#alerts', e.onlineChannel,
                                             'Channel where all alerts should go to.', allowedChannelTypes))
                                     // Add the toggle for auto bot streaming status
-                                    .append(helpers.getDropdownGroup('delete-message', 'Delete alerts automatically', (e.deleteMessageToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('delete-message', 'Delete alerts automatically', (helpers.isTrue(e.deleteMessageToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'Automatically delete the online message after the stream ends and the offline message when a new stream starts.'))))),
                     function () {
                         let onlineToggle = $('#online-toggle').find(':selected').text() === 'Yes',
+                                onlinePublish = $('#online-publish').find(':selected').text() === 'Yes',
                                 statusToggle = $('#online-status').find(':selected').text() === 'Yes',
                                 onlineMessage = $('#online-message'),
+                                onlineDelay = $('#online-delay'),
                                 offlineToggle = $('#offline-toggle').find(':selected').text() === 'Yes',
+                                offlinePublish = $('#offline-publish').find(':selected').text() === 'Yes',
                                 offlineMessage = $('#offline-message'),
+                                offlineDelay = $('#offline-delay'),
                                 gameToggle = $('#game-toggle').find(':selected').text() === 'Yes',
+                                gamePublish = $('#game-publish').find(':selected').text() === 'Yes',
                                 gameMessage = $('#game-message'),
                                 channel = $('#channel-alert'),
                                 deleteMessageToggle = $('#delete-message').find(':selected').text() === 'Yes';
 
                         switch (false) {
                             case helpers.handleInputString(onlineMessage):
+                            case helpers.handleInputNumber(onlineDelay, 1):
                             case helpers.handleInputString(offlineMessage):
+                            case helpers.handleInputNumber(offlineDelay, 1):
                             case helpers.handleInputString(gameMessage):
                                 break;
                             default:
                                 socket.updateDBValues('discord_stream_alerts_updater', {
-                                    tables: ['discordSettings', 'discordSettings', 'discordSettings', 'discordSettings',
-                                        'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings',
-                                        'discordSettings', ],
-                                    keys: ['onlineToggle', 'onlineMessage', 'offlineToggle', 'offlineMessage',
-                                        'gameToggle', 'gameMessage', 'botGameToggle', 'onlineChannel', 'deleteMessageToggle'],
-                                    values: [onlineToggle, onlineMessage.val(), offlineToggle, offlineMessage.val(),
-                                        gameToggle, gameMessage.val(), statusToggle, channel.val(), deleteMessageToggle]
+                                    tables: ['discordSettings', 'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings',
+                                        'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings',
+                                        'discordSettings', 'discordSettings', 'discordSettings', 'discordSettings'],
+                                    keys: ['onlineToggle', 'onlinePublish', 'onlineMessage', 'offlineToggle', 'offlinePublish', 'offlineMessage',
+                                        'gameToggle', 'gamePublish', 'gameMessage', 'botGameToggle', 'onlineChannel', 'deleteMessageToggle',
+                                        'onlineDelay', 'offlineDelay'],
+                                    values: [onlineToggle, onlinePublish, onlineMessage.val(), offlineToggle, offlinePublish, offlineMessage.val(),
+                                        gameToggle, gamePublish, gameMessage.val(), statusToggle, channel.val(), deleteMessageToggle,
+                                        onlineDelay.val(), offlineDelay.val()]
                                 }, function () {
                                     socket.wsEvent('discord', './discord/handlers/streamHandler.js', '', [], function () {
                                         // Close the modal.
@@ -532,10 +519,11 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#channel-alert').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#channel-alert').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
@@ -561,7 +549,7 @@ $(function () {
                                 'role': 'form'
                             })
                                     // Add the toggle for alert
-                                    .append(helpers.getDropdownGroup('join-toggle', 'Enable Join Messages', (e.joinToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('join-toggle', 'Enable Join Messages', (helpers.isTrue(e.joinToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in the channel when someone joins your Discord.'))
                                     // Add a box for the join role.
                                     .append(helpers.getInputGroup('join-role', 'text', 'Join Role', 'Newbie', e.greetingsDefaultGroup,
@@ -574,7 +562,7 @@ $(function () {
                                 'role': 'form'
                             })
                                     // Add the toggle for part alerts.
-                                    .append(helpers.getDropdownGroup('part-toggle', 'Enable Part Messages', (e.partToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('part-toggle', 'Enable Part Messages', (helpers.isTrue(e.partToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a message should be said in the channel when someone leaves your Discord.'))
                                     // Add the text area for the part message.
                                     .append(helpers.getTextAreaGroup('part-message', 'text', 'Part Message', '', e.partMessage,
@@ -617,10 +605,11 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#channel-alert').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#channel-alert').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
@@ -635,7 +624,7 @@ $(function () {
                 'role': 'form'
             })
                     // Add the toggle for follow alerts.
-                    .append(helpers.getDropdownGroup('streamlabs-toggle', 'Enable StreamLabs Alerts', (e.streamlabsToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                    .append(helpers.getDropdownGroup('streamlabs-toggle', 'Enable StreamLabs Alerts', (helpers.isTrue(e.streamlabsToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                             'If a message should be said in the channel when someone tips.'))
                     // Add the the text area for the follow message.
                     .append(helpers.getTextAreaGroup('streamlabs-message', 'text', 'Tip Message', '', e.streamlabsMessage,
@@ -669,10 +658,11 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#streamlabs-channel').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#streamlabs-channel').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
@@ -687,7 +677,7 @@ $(function () {
                 'role': 'form'
             })
                     // Add the toggle for follow alerts.
-                    .append(helpers.getDropdownGroup('tipeeestream-toggle', 'Enable TipeeeStream Alerts', (e.tipeeestreamToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                    .append(helpers.getDropdownGroup('tipeeestream-toggle', 'Enable TipeeeStream Alerts', (helpers.isTrue(e.tipeeestreamToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                             'If a message should be said in the channel when someone tips.'))
                     // Add the the text area for the follow message.
                     .append(helpers.getTextAreaGroup('tipeeestream-message', 'text', 'Tip Message', '', e.tipeeestreamMessage,
@@ -721,10 +711,11 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#tipeeestream-channel').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#tipeeestream-channel').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
@@ -739,7 +730,7 @@ $(function () {
                 'role': 'form'
             })
                     // Add the toggle for follow alerts.
-                    .append(helpers.getDropdownGroup('streamelements-toggle', 'Enable StreamElements Alerts', (e.streamelementsToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                    .append(helpers.getDropdownGroup('streamelements-toggle', 'Enable StreamElements Alerts', (helpers.isTrue(e.streamelementsToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
                             'If a message should be said in the channel when someone tips.'))
                     // Add the the text area for the follow message.
                     .append(helpers.getTextAreaGroup('streamelements-message', 'text', 'Tip Message', '', e.streamelementsMessage,
@@ -773,57 +764,85 @@ $(function () {
                                 });
                         }
                     }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#streamelements-channel').select2({ templateResult: discordChannelTemplate });
-                }
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#streamelements-channel').select2({templateResult: discordChannelTemplate});
+                    }
+                });
             }).modal('toggle');
         });
     });
 
-    // Twitter settings.
-    $('#discordTwitterHandlerSettings').on('click', function () {
-        socket.getDBValues('discord_alerts_twitter_get_settings', {
-            tables: ['discordSettings', 'discordSettings'],
-            keys: ['twitterToggle', 'twitterChannel']
+    // Bluesky account link. Only shown to the bot's config users.
+    $('#discordBlueskyLink').on('click', helpers.openBlueskyLinkModal);
+
+    // Bluesky settings. The handler reads these each time it announces, so no reload is sent.
+    $('#discordBlueskyHandlerSettings').on('click', function () {
+        let kinds = [
+                {id: 'Mentions', label: 'Mentions, Replies and Quotes'},
+                {id: 'Reposts', label: 'Reposts'},
+                {id: 'Posts', label: 'Your Posts'}
+            ],
+            keys = ['blueskyToggle', 'blueskyChannel'];
+
+        kinds.forEach(function (kind) {
+            keys.push('blueskyAnnounce' + kind.id, 'blueskyChannel' + kind.id);
+        });
+
+        socket.getDBValues('discord_alerts_bluesky_get_settings', {
+            tables: keys.map(function () { return 'discordSettings'; }),
+            keys: keys
         }, true, function (e) {
-            helpers.getModal('twitter-alert', 'Twitter Alert Settings', 'Save', $('<form/>', {
+            let form = $('<form/>', {
                 'role': 'form'
             })
-                    // Add the toggle for follow alerts.
-                    .append(helpers.getDropdownGroup('twitter-toggle', 'Enable Twitter Alerts', (e.twitterToggle === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
-                            'If your Tweets should be posted in Discord. Please note that the Twitch Twitter module needs to be setup for this to work.'))
-                    // Add the the box for the reward.
-                    .append(getChannelSelector('twitter-channel', 'Alert Channel', '#alerts', e.twitterChannel,
-                            'Channel where all alerts should go to.', allowedChannelTypes)),
-                    function () { // Callback once the user clicks save.
-                        let twitterToggle = $('#twitter-toggle').find(':selected').text() === 'Yes',
-                                twitterChannel = $('#twitter-channel');
+                    // Add the toggle for Bluesky alerts.
+                    .append(helpers.getDropdownGroup('bluesky-toggle', 'Enable Bluesky Alerts', (helpers.isTrue(e.blueskyToggle) ? 'Yes' : 'No'), ['Yes', 'No'],
+                            'If Bluesky activity should be posted in Discord.'))
+                    // Add the default channel selector.
+                    .append(getChannelSelector('bluesky-channel', 'Default Channel', '#alerts', e.blueskyChannel,
+                            'Channel for every kind of Bluesky alert that has no channel of its own.', allowedChannelTypes));
 
-                        // Make sure everything has been filled it correctly.
-                        switch (false) {
-                            case helpers.handleInputString(twitterChannel):
-                                break;
-                            default:
-                                // Update settings.
-                                socket.updateDBValues('discord_alerts_twitter_update_settings', {
-                                    tables: ['discordSettings', 'discordSettings'],
-                                    keys: ['twitterToggle', 'twitterChannel'],
-                                    values: [twitterToggle, twitterChannel.val()]
-                                }, function () {
-                                    socket.wsEvent('discord', './discord/handlers/twitterHandler.js', '', [], function () {
-                                        // Close the modal.
-                                        $('#twitter-alert').modal('toggle');
-                                        // Alert the user.
-                                        toastr.success('Successfully updated the Twitter alert settings!');
-                                    });
-                                });
-                        }
-                    }).on('shown.bs.modal', function (e) {
-                refreshChannels();
-                if (discordChannels !== null) {
-                    $('#twitter-channel').select2({ templateResult: discordChannelTemplate });
+            kinds.forEach(function (kind) {
+                form.append(helpers.getDropdownGroup('bluesky-announce-' + kind.id, 'Announce ' + kind.label, (helpers.isTrue(e['blueskyAnnounce' + kind.id]) ? 'Yes' : 'No'),
+                        ['Yes', 'No'], 'If ' + kind.label.toLowerCase() + ' on Bluesky should be posted in Discord. These are chosen apart from the Twitch chat alerts.'))
+                    .append(getChannelSelector('bluesky-channel-' + kind.id, kind.label + ' Channel', '', e['blueskyChannel' + kind.id] || '',
+                            'Channel for ' + kind.label.toLowerCase() + '.', allowedChannelTypes, 'Same as the default channel'));
+            });
+
+            helpers.getModal('bluesky-alert', 'Bluesky Alert Settings', 'Save', form, function () { // Callback once the user clicks save.
+                let blueskyChannel = $('#bluesky-channel'),
+                        values = [$('#bluesky-toggle').find(':selected').text() === 'Yes', blueskyChannel.val()];
+
+                kinds.forEach(function (kind) {
+                    values.push($('#bluesky-announce-' + kind.id).find(':selected').text() === 'Yes', $('#bluesky-channel-' + kind.id).val() || '');
+                });
+
+                // Make sure everything has been filled it correctly.
+                switch (false) {
+                    case helpers.handleInputString(blueskyChannel):
+                        break;
+                    default:
+                        socket.updateDBValues('discord_alerts_bluesky_update_settings', {
+                            tables: keys.map(function () { return 'discordSettings'; }),
+                            keys: keys,
+                            values: values
+                        }, function () {
+                            // Close the modal.
+                            $('#bluesky-alert').modal('toggle');
+                            // Alert the user.
+                            toastr.success('Successfully updated the Bluesky alert settings!');
+                        });
                 }
+            }).on('shown.bs.modal', function () {
+                refreshChannels(function () {
+                    if (discordChannels !== null) {
+                        $('#bluesky-channel').select2({templateResult: discordChannelTemplate});
+                        kinds.forEach(function (kind) {
+                            $('#bluesky-channel-' + kind.id).select2({templateResult: discordChannelTemplate});
+                        });
+                    }
+                });
             }).modal('toggle');
         });
     });

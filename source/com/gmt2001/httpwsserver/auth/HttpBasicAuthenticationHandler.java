@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,24 +16,26 @@
  */
 package com.gmt2001.httpwsserver.auth;
 
-import com.gmt2001.httpwsserver.HTTPWSServer;
-import com.gmt2001.httpwsserver.HttpServerPageHandler;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.DefaultFullHttpResponse;
-import io.netty.handler.codec.http.FullHttpRequest;
-import io.netty.handler.codec.http.HttpHeaderNames;
-import static io.netty.handler.codec.http.HttpHeaderNames.CONNECTION;
-import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
-import io.netty.handler.codec.http.HttpHeaders;
-import io.netty.handler.codec.http.HttpResponseStatus;
-import io.netty.handler.codec.http.HttpUtil;
-import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
-import io.netty.util.CharsetUtil;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Objects;
+
+import com.gmt2001.httpwsserver.HttpServerPageHandler;
+import com.gmt2001.security.Digest;
+import com.mcawful.PanelSessionManager;
+
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.QueryStringDecoder;
+import io.netty.util.AttributeKey;
+import tv.phantombot.panel.PanelUser.PanelUser;
+import tv.phantombot.panel.PanelUser.PanelUserHandler;
 
 /**
  * Provides a {@link HttpAuthenticationHandler} that implements HTTP Basic authentication, as well as allowing the same format to be provided in a
@@ -43,6 +45,10 @@ import java.util.Map;
  */
 public class HttpBasicAuthenticationHandler implements HttpAuthenticationHandler {
 
+    /**
+     * Represents the {@code ATTR_AUTH_USER} attribute
+     */
+    public static final AttributeKey<PanelUser> ATTR_AUTH_USER = AttributeKey.valueOf("authUser");
     /**
      * The realm to present to the user
      */
@@ -55,6 +61,10 @@ public class HttpBasicAuthenticationHandler implements HttpAuthenticationHandler
      * The password required for valid authentication
      */
     private final String pass;
+    /**
+     * Whether this instance is allow to authenticate headers against {@link PanelUser}
+     */
+    private final boolean allowPaneluser;
 
     /**
      * If set, failed authentication redirects to this URI with 303 See Other instead of outputting 401 Unauthorized
@@ -71,95 +81,67 @@ public class HttpBasicAuthenticationHandler implements HttpAuthenticationHandler
      * @throws IllegalArgumentException If {@code realm} contains any double quotes or {@code user} contains any colons
      */
     public HttpBasicAuthenticationHandler(String realm, String user, String pass, String loginUri) {
+        this(realm, user, pass, loginUri, false);
+    }
+
+    /**
+     * Constructor
+     *
+     * @param realm The realm to present to the user
+     * @param user The username required for valid authentication
+     * @param pass The password required for valid authentication
+     * @param loginUri The login page URI
+     * @param allowPanelUser Whether this instance is allow to authenticate headers against {@link PanelUser}
+     * @throws IllegalArgumentException If {@code realm} contains any double quotes or {@code user} contains any colons
+     */
+    public HttpBasicAuthenticationHandler(String realm, String user, String pass, String loginUri, boolean allowPaneluser) {
         if (realm.contains("\"") || user.contains(":")) {
             throw new IllegalArgumentException("Illegal realm or username. Realm must not contain double quotes, user must not contain colon");
         }
 
         this.realm = realm;
         this.user = user;
-        this.pass = pass;
+        this.pass = Digest.sha256(pass);
         this.loginUri = loginUri;
+        this.allowPaneluser = allowPaneluser;
     }
 
     /**
      * Checks if the given {@link FullHttpRequest} has the correct header with valid credentials
      *
      * @param ctx The {@link ChannelHandlerContext} of the session
-     * @param frame The {@link FullHttpRequest} to check
-     * @return {@code true} if authenticated, {@code false} otherwise. When returning {@code false}, this method will also reply with
-     * {@code 401 Unauthorized} and then close the channel
+     * @param req The {@link FullHttpRequest} to check
+     * @return, this method will also reply with {@code 401 Unauthorized} and then close the channel
      */
     @Override
     public boolean checkAuthorization(ChannelHandlerContext ctx, FullHttpRequest req) {
-        HttpHeaders headers = req.headers();
+        ctx.channel().attr(ATTR_AUTH_USER).setIfAbsent(null);
+        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
 
-        String auth = headers.get("Authorization");
-
-        if (auth != null && auth.startsWith("Basic ")) {
-            auth = auth.substring(6);
-            String userpass = new String(Base64.getDecoder().decode(auth));
-            int colon = userpass.indexOf(':');
-
-            if (userpass.substring(0, colon).equals(user) && userpass.substring(colon + 1).equals(pass)) {
-                return true;
-            }
-        } else {
-            Map<String, String> cookies = HttpServerPageHandler.parseCookies(headers);
-            auth = cookies.getOrDefault("panellogin", null);
-
-            if (auth != null) {
-                String userpass = new String(Base64.getDecoder().decode(auth));
-                int colon = userpass.indexOf(':');
-
-                if (userpass.substring(0, colon).equals(user) && userpass.substring(colon + 1).equals(pass)) {
-                    return true;
-                }
-            }
+        if (this.isAuthorized(ctx, req)) {
+            return true;
         }
 
-        if (this.loginUri == null || this.loginUri.isBlank()) {
-            DefaultFullHttpResponse res = new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.UNAUTHORIZED, Unpooled.buffer());
-            ByteBuf buf = Unpooled.copiedBuffer(res.status().toString(), CharsetUtil.UTF_8);
-            res.content().writeBytes(buf);
-            buf.release();
-            HttpUtil.setContentLength(res, res.content().readableBytes());
+        String auth = getAuthorizationString(req.headers());
 
+        if (this.loginUri == null || this.loginUri.isBlank()) {
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.UNAUTHORIZED);
             if (auth == null) {
                 com.gmt2001.Console.debug.println("WWW-Authenticate");
                 res.headers().set("WWW-Authenticate", "Basic realm=\"" + realm + "\", charset=\"UTF-8\"");
             }
 
-            com.gmt2001.Console.debug.println("401");
-            com.gmt2001.Console.debug.println("Expected: >" + user + ":" + pass + "<");
-            if (auth != null) {
-                com.gmt2001.Console.debug.println("Got: >" + new String(Base64.getDecoder().decode(auth)) + "<");
-            }
+            com.gmt2001.Console.debug.println("401 " + req.method().asciiName() + ": " + qsd.path());
 
-            res.headers().set(CONNECTION, CLOSE);
-            ctx.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
+            HttpServerPageHandler.sendHttpResponse(ctx, req, res);
         } else {
-            DefaultFullHttpResponse res = new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.SEE_OTHER, Unpooled.buffer());
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.SEE_OTHER);
 
-            String host = req.headers().get(HttpHeaderNames.HOST);
+            res.headers().set(HttpHeaderNames.LOCATION, this.loginUri + (this.loginUri.contains("?") ? "&" : "?") + "kickback=" + URLEncoder.encode(req.uri(), StandardCharsets.UTF_8));
 
-            if (host == null) {
-                host = "";
-            } else if (HTTPWSServer.instance().isSsl()) {
-                host = "https://" + host;
-            } else {
-                host = "http://" + host;
-            }
+            com.gmt2001.Console.debug.println("303 " + req.method().asciiName() + ": " + qsd.path());
 
-            res.headers().set(HttpHeaderNames.LOCATION, host + this.loginUri + "?kickback=" + req.uri());
-
-            com.gmt2001.Console.debug.println("303");
-            com.gmt2001.Console.debug.println("Expected: >" + user + ":" + pass + "<");
-            if (auth != null) {
-                com.gmt2001.Console.debug.println("Got: >" + new String(Base64.getDecoder().decode(auth)) + "<");
-            }
-
-            res.headers().set(CONNECTION, CLOSE);
-            ctx.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
+            HttpServerPageHandler.sendHttpResponse(ctx, req, res);
         }
 
         return false;
@@ -167,6 +149,93 @@ public class HttpBasicAuthenticationHandler implements HttpAuthenticationHandler
 
     @Override
     public void invalidateAuthorization(ChannelHandlerContext ctx, FullHttpRequest req) {
-        throw new UnsupportedOperationException("Not supported by this authentication handler.");
+        ctx.channel().attr(ATTR_AUTH_USER).set(null);
+    }
+
+    @Override
+    public boolean isAuthorized(ChannelHandlerContext ctx, FullHttpRequest req) {
+        return this.isAuthorized(ctx, req.headers(), req.uri());
+    }
+
+    @Override
+    public boolean isAuthorized(String user, String pass) {
+        return (this.allowPaneluser && PanelUserHandler.checkLogin(user, pass)) || (user.equalsIgnoreCase(this.user) && pass.equals(this.pass));
+    }
+
+    @Override
+    public boolean isAuthorized(ChannelHandlerContext ctx, HttpHeaders headers) {
+        return this.isAuthorized(ctx, headers, null);
+    }
+
+    /**
+     * Checks the given {@link HttpHeaders} for either an {@code Authorization Basic}, or a cookie named {@code panellogin}
+     *
+     * @param headers The {@link HttpHeaders} to check
+     * @return The authorization string, still encoded with Base64, giving preference to {@code Authorization Basic}; {@code null} if neither is found
+     */
+    public static String getAuthorizationString(HttpHeaders headers) {
+        String auth = headers.get("Authorization");
+
+        if (auth != null && auth.startsWith("Basic ")) {
+            auth = auth.substring(6);
+        } else {
+            Map<String, String> cookies = HttpServerPageHandler.parseCookies(headers);
+            auth = cookies.getOrDefault("panellogin", null);
+        }
+
+        return auth;
+    }
+
+    private boolean isAuthorized(ChannelHandlerContext ctx, HttpHeaders headers, String requestUri) {
+        // A session started by signing in with a passkey is used ahead of the panellogin cookie
+        if (this.allowPaneluser && !headers.contains(HttpHeaderNames.AUTHORIZATION)) {
+            PanelSessionManager.Session session = PanelSessionManager.getSession(headers);
+            PanelUser sessionUser = session == null ? null : session.getUser();
+
+            if (sessionUser != null && PanelUserHandler.isUriAllowed(sessionUser, requestUri)) {
+                ctx.channel().attr(ATTR_AUTH_USER).set(sessionUser);
+                return true;
+            }
+        }
+
+        String auth = getAuthorizationString(headers);
+
+        if (auth != null) {
+            String userpass = new String(Base64.getDecoder().decode(auth));
+            if (!userpass.isBlank()) {
+                int colon = userpass.indexOf(':');
+                boolean isPanelUserLoggedIn = false;
+                if (this.allowPaneluser) {
+                    PanelUser user = PanelUserHandler.checkLoginAndGetUserB64(auth, requestUri);
+                    isPanelUserLoggedIn = user != null;
+                    if (isPanelUserLoggedIn) {
+                        ctx.channel().attr(ATTR_AUTH_USER).set(user);
+                    }
+                }
+                return isPanelUserLoggedIn
+                    || (userpass.substring(0, colon).equalsIgnoreCase(user) && userpass.substring(colon + 1).equals(pass));
+            }
+        }
+
+        return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(realm, user, pass, allowPaneluser, loginUri);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        HttpBasicAuthenticationHandler other = (HttpBasicAuthenticationHandler) obj;
+        return Objects.equals(realm, other.realm) && Objects.equals(user, other.user)
+                && Objects.equals(pass, other.pass) && allowPaneluser == other.allowPaneluser
+                && Objects.equals(loginUri, other.loginUri);
     }
 }

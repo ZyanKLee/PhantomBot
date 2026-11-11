@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
         timerInterval = $.getSetIniDbNumber('dualStreamCommand', 'timerInterval', 20),
         reqMessages = $.getSetIniDbNumber('dualStreamCommand', 'reqMessages', 10),
         messageCount = 0,
+        _messageCountLock = new Packages.java.util.concurrent.locks.ReentrantLock(),
         lastSent = 0;
 
     /*
@@ -37,7 +38,12 @@
      * @event ircChannelMessage
      */
     $.bind('ircChannelMessage', function(event) {
-        messageCount++;
+        _messageCountLock.lock();
+        try {
+            messageCount++;
+        } finally {
+            _messageCountLock.unlock();
+        }
     });
 
     /*
@@ -54,14 +60,14 @@
         /*
          * @commandpath multi - Displays the current multi-link information of the usage
          */
-        if (command.equalsIgnoreCase('multi')) {
+        if ($.equalsIgnoreCase(command, 'multi')) {
             if (action === undefined) {
                 if (!otherChannels.equals('Channel-1 Channel-2')) {
                     $.say($.lang.get('dualstreamcommand.link') + $.channelName + '/' + otherChannels.split(' ').join('/'));
-                } else {
-                    if ($.isModv3(sender, event.getTags())) {
-                        $.say($.whisperPrefix(sender) + $.lang.get('dualstreamcommand.usage'));
-                    }
+                    return;
+                }
+                if ($.checkUserPermission(sender, event.getTags(), $.PERMISSION.Mod)) {
+                    $.say($.whisperPrefix(sender) + $.lang.get('dualstreamcommand.usage'));
                 }
                 return;
             }
@@ -69,7 +75,7 @@
             /*
              * @commandpath multi set [channels] - Adds a space-delimited list of channels to the multi-link (local channel already added)
              */
-            if (action.equalsIgnoreCase('set')) {
+            if ($.equalsIgnoreCase(action, 'set')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('dualstreamcommand.set.usage'));
                     return;
@@ -85,7 +91,7 @@
             /*
              * @commandpath multi clear - Clears the multi-links and disables the timer
              */
-            if (action.equalsIgnoreCase('clear')) {
+            if ($.equalsIgnoreCase(action, 'clear')) {
                 otherChannels = 'Channel-1 Channel-2';
                 timerToggle = false;
 
@@ -98,13 +104,13 @@
             /*
              * @commandpath multi timer [on / off] - Enable or disabled the multi-links timer
              */
-            if (action.equalsIgnoreCase('timer')) {
+            if ($.equalsIgnoreCase(action, 'timer')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('dualstreamcommand.timer.usage'));
                     return;
                 }
 
-                timerToggle = subAction.equalsIgnoreCase('on');
+                timerToggle = $.equalsIgnoreCase(subAction, 'on');
                 $.say($.whisperPrefix(sender) + (timerToggle ? $.lang.get('dualstreamcommand.timer.enabled') : $.lang.get('dualstreamcommand.timer.disabled')));
                 $.inidb.set('dualStreamCommand', 'timerToggle', timerToggle);
                 return;
@@ -113,7 +119,7 @@
             /*
              * @commandpath multi timerinterval [time in minutes] - Set the interval for the multi-links timer
              */
-            if (action.equalsIgnoreCase('timerinterval')) {
+            if ($.equalsIgnoreCase(action, 'timerinterval')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('dualstreamcommand.timerinterval.usage'));
                     return;
@@ -132,7 +138,7 @@
             /*
              * @commandpath multi reqmessage [amount of messages] - Set the amount of message required before triggering the dual stream link
              */
-            if (action.equalsIgnoreCase('reqmessage')) {
+            if ($.equalsIgnoreCase(action, 'reqmessage')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('dualstreamcommand.req.usage'));
                     return;
@@ -148,7 +154,7 @@
         /*
          * Panel command, no command path needed here.
          */
-        if (command.equalsIgnoreCase('reloadmulti')) {
+        if ($.equalsIgnoreCase(command, 'reloadmulti')) {
             reloadMulti();
         }
     });
@@ -157,24 +163,29 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./commands/dualstreamCommand.js', 'multi', 7);
-        $.registerChatCommand('./commands/dualstreamCommand.js', 'reloadmulti', 1);
+        $.registerChatCommand('./commands/dualstreamCommand.js', 'multi', $.PERMISSION.Viewer);
+        $.registerChatCommand('./commands/dualstreamCommand.js', 'reloadmulti', $.PERMISSION.Admin);
 
-        $.registerChatSubcommand('multi', 'set', 2);
-        $.registerChatSubcommand('multi', 'clear', 2);
-        $.registerChatSubcommand('multi', 'timer', 2);
-        $.registerChatSubcommand('multi', 'timerinterval', 1);
-        $.registerChatSubcommand('multi', 'reqmessage', 1);
+        $.registerChatSubcommand('multi', 'set', $.PERMISSION.Mod);
+        $.registerChatSubcommand('multi', 'clear', $.PERMISSION.Mod);
+        $.registerChatSubcommand('multi', 'timer', $.PERMISSION.Mod);
+        $.registerChatSubcommand('multi', 'timerinterval', $.PERMISSION.Admin);
+        $.registerChatSubcommand('multi', 'reqmessage', $.PERMISSION.Admin);
 
         /*
          * interval timer.
          */
         var interval = setInterval(function() {
             if (timerToggle && !otherChannels.equals('Channel-1 Channel-2')) {
-                if ($.isOnline($.channelName) && messageCount >= reqMessages && $.systemTime() >= lastSent) {
-                    $.say($.lang.get('dualstreamcommand.link') + $.channelName + '/' + otherChannels.split(' ').join('/'));
-                    lastSent = ($.systemTime() + (timerInterval * 6e4));
-                    messageCount = 0;
+                _messageCountLock.lock();
+                try {
+                    if ($.isOnline($.channelName) && messageCount >= reqMessages && $.systemTime() >= lastSent) {
+                        $.say($.lang.get('dualstreamcommand.link') + $.channelName + '/' + otherChannels.split(' ').join('/'));
+                        lastSent = ($.systemTime() + (timerInterval * 6e4));
+                        messageCount = 0;
+                    }
+                } finally {
+                    _messageCountLock.unlock();
                 }
             }
         }, 10e3);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,8 +16,54 @@
  */
 
 (function() {
+    let tables = ['points', 'time', 'followed', 'followedDate', 'subscribed', 'greeting', 'greetingCoolDown', 'visited', 'lastseen', 'group', 'preSubGroup', 'viewerRanks', 'welcome_disabled_users'];
+
+    /**
+     * @function changeName Re-associates viewer-specific database entries to a new username
+     *
+     * @export $.nameConverter
+     * @param {string} oldName Old Twitch Name
+     * @param {string} newName New Twitch Name
+     * @return {number} 0 if not found; otherwise number of tables updated
+     */
+    function changeName(oldName, newName) {
+        if (oldName === undefined || oldName === null || newName === undefined || newName === null) {
+            return 0;
+        }
+
+        let changed = 0,
+                i;
+
+        oldName = $.jsString(oldName).toLowerCase();
+        newName = $.jsString(newName);
+        let newNameL = $.jsString(newName).toLowerCase();
+
+        // Update the default tables with that users new name if it's currently in any tables.
+        for (i in tables) {
+            let entry = $.optIniDbString(tables[i], oldName);
+            if (entry.isPresent()) {
+                $.inidb.set(tables[i], newNameL, entry.get());
+                $.inidb.del(tables[i], oldName);
+                changed++;
+            }
+        }
+
+        // Update the username in the quotes table.
+        let keys = $.inidb.GetKeyList('quotes', ''),
+            jsonArr;
+
+        for (i in keys) {
+            if ($.getIniDbString('quotes', keys[i]).toLowerCase().indexOf(oldName) > -1) {
+                jsonArr = JSON.parse($.getIniDbString('quotes', keys[i]));
+                $.inidb.set('quotes', keys[i], JSON.stringify([String(newName), String(jsonArr[1]), String(jsonArr[2]), String(jsonArr[3])]));
+            }
+        }
+
+        return changed;
+    }
+
     $.bind('command', function(event) {
-        var sender = event.getSender(),
+        let sender = event.getSender(),
             command = event.getCommand(),
             args = event.getArgs(),
             action = args[0],
@@ -27,37 +73,15 @@
         /**
          * @commandpath namechange [oldname] [newname] - Convert someones old Twitch username to his/her new Twitch name. The user will be able to keep their points, time, quotes, and more.
          */
-        if (command.equalsIgnoreCase('namechange')) {
+        if ($.equalsIgnoreCase(command, 'namechange')) {
             if (action === undefined || subAction === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('namechange.default'));
                 return;
             }
 
-            var tables = ['points', 'time', 'followed', 'subscribed', 'visited', 'group', 'panelchatuserstats', 'panelchatstats'],
-                changed = 0,
-                i;
-
             $.say($.whisperPrefix(sender) + $.lang.get('namechange.updating', action, subAction));
 
-            // Update the default tables with that users new name if it's currently in any tables.
-            for (i in tables) {
-                if ($.inidb.exists(tables[i], action.toLowerCase()) == true) {
-                    $.inidb.set(tables[i], subAction.toLowerCase(), $.inidb.get(tables[i], action.toLowerCase()));
-                    $.inidb.del(tables[i], action.toLowerCase());
-                    changed++;
-                }
-            }
-
-            // Update the username in the quotes table.
-            var keys = $.inidb.GetKeyList('quotes', ''),
-                jsonArr;
-
-            for (i in keys) {
-                if ($.inidb.get('quotes', keys[i]).toLowerCase().indexOf(action.toLowerCase()) > -1) {
-                    jsonArr = JSON.parse($.inidb.get('quotes', keys[i]));
-                    $.inidb.set('quotes', keys[i], JSON.stringify([String(subAction), String(jsonArr[1]), String(jsonArr[2]), String(jsonArr[3])]));
-                }
-            }
+            let changed = changeName(action, subAction)
 
             // Announce in chat once done.
             if (changed > 0) {
@@ -69,6 +93,9 @@
     });
 
     $.bind('initReady', function() {
-        $.registerChatCommand('./commands/nameConverter.js', 'namechange', 1);
+        $.registerChatCommand('./commands/nameConverter.js', 'namechange', $.PERMISSION.Admin);
     });
+
+    $.nameConverter = {};
+    $.nameConverter.changeName = changeName;
 })();

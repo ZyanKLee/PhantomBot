@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,11 +24,16 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketCloseStatus;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+
+import java.util.Objects;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONStringer;
+import tv.phantombot.CaselessProperties;
 import tv.phantombot.PhantomBot;
 import tv.phantombot.RepoVersion;
+import tv.phantombot.panel.PanelUser.PanelUserHandler;
 
 /**
  *
@@ -36,18 +41,9 @@ import tv.phantombot.RepoVersion;
  */
 public class WsPanelRemoteLoginHandler implements WsFrameHandler {
 
-    private final WsAuthenticationHandler authHandler;
-    private final String panelUser;
-    private final String panelPassword;
-    private final String panelAuthRO;
-    private final String panelAuth;
+    private final WsAuthenticationHandler authHandler = WsNoAuthenticationHandler.instance();
 
-    public WsPanelRemoteLoginHandler(String panelUser, String panelPassword, String panelAuthRO, String panelAuth) {
-        this.authHandler = WsNoAuthenticationHandler.instance();
-        this.panelUser = panelUser;
-        this.panelPassword = panelPassword;
-        this.panelAuthRO = panelAuthRO;
-        this.panelAuth = panelAuth;
+    public WsPanelRemoteLoginHandler() {
     }
 
     @Override
@@ -58,16 +54,14 @@ public class WsPanelRemoteLoginHandler implements WsFrameHandler {
 
     @Override
     public WsAuthenticationHandler getAuthHandler() {
-        return authHandler;
+        return this.authHandler;
     }
 
     @Override
     public void handleFrame(ChannelHandlerContext ctx, WebSocketFrame frame) {
         JSONStringer jsonObject = new JSONStringer();
         boolean isError = false;
-        if (frame instanceof TextWebSocketFrame) {
-            TextWebSocketFrame tframe = (TextWebSocketFrame) frame;
-
+        if (frame instanceof TextWebSocketFrame tframe) {
             JSONObject jso;
 
             try {
@@ -89,12 +83,15 @@ public class WsPanelRemoteLoginHandler implements WsFrameHandler {
             if (jso.has("remote") && jso.getString("query").equals("login")) {
                 jsonObject.object();
                 if (jso.getJSONObject("params").getString("type").equalsIgnoreCase("AuthRO")) {
-                    jsonObject.key("authtoken").value(this.panelAuthRO).key("authtype").value("read");
-                } else if (jso.getJSONObject("params").getString("user").equals(this.panelUser) && jso.getJSONObject("params").getString("pass").equals(this.panelPassword)) {
-                    jsonObject.key("authtoken").value(this.panelAuth).key("authtype").value("read/write");
-                } else if (jso.getJSONObject("params").getString("user").equals("broadcaster")
+                    jsonObject.key("authtoken").value(CaselessProperties.instance().getProperty("webauthro")).key("authtype").value("read");
+                } else if (PanelUserHandler.checkLogin(jso.getJSONObject("params").getString("user"), jso.getJSONObject("params").getString("pass"))) {
+                    jsonObject.key("authtoken").value(PanelUserHandler.getUserAuthToken(jso.getJSONObject("params").getString("user")));
+                } else if (jso.getJSONObject("params").getString("user").equals("broadcaster") && PhantomBot.instance() != null
                         && PhantomBot.instance().getHTTPOAuthHandler().validateBroadcasterToken(jso.getJSONObject("params").getString("pass"))) {
                     jsonObject.key("authtoken").value(jso.getJSONObject("params").getString("pass")).key("authtype").value("oauth/broadcaster");
+                } else if (jso.getJSONObject("params").getString("user").equalsIgnoreCase("token") && PhantomBot.instance() != null
+                        && PhantomBot.instance().getHTTPSetupHandler().checkTokenAuthorization(jso.getJSONObject("params").getString("user"), jso.getJSONObject("params").getString("pass"))) {
+                    jsonObject.key("authtoken").value("").key("authtype").value("setup/token");
                 } else {
                     jsonObject.key("errors").array().object()
                             .key("status").value("401")
@@ -106,7 +103,7 @@ public class WsPanelRemoteLoginHandler implements WsFrameHandler {
 
                 if (!isError) {
                     jsonObject.key("version-data").object().key("version").value(RepoVersion.getPhantomBotVersion()).key("commit").value(RepoVersion.getRepoVersion());
-                    jsonObject.key("build-type").value(RepoVersion.getBuildType()).key("panel-version").value(RepoVersion.getPanelVersion());
+                    jsonObject.key("build-type").value(RepoVersion.getBuildType());
                     jsonObject.key("java-version").value(System.getProperty("java.runtime.version"));
                     jsonObject.key("os-version").value(System.getProperty("os.name"));
                     jsonObject.endObject();
@@ -137,5 +134,22 @@ public class WsPanelRemoteLoginHandler implements WsFrameHandler {
             WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareCloseWebSocketFrame(WebSocketCloseStatus.NORMAL_CLOSURE));
         }
         ctx.close();
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(authHandler);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        WsPanelRemoteLoginHandler other = (WsPanelRemoteLoginHandler) obj;
+        return Objects.equals(authHandler, other.authHandler);
     }
 }

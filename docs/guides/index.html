@@ -1,5 +1,7 @@
+<!DOCTYPE html>
+
 <!--
-    Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+    Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -11,8 +13,6 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 -->
-
-<!DOCTYPE html>
 
 <html>
     <head>
@@ -33,8 +33,8 @@
         <link rel="stylesheet" href="../common/css/AdminLTE.dark.min.css" />
         <link rel="stylesheet" href="../common/css/skin-purple.dark.min.css" />
         <link rel="stylesheet" href="../common/css/pace.min.css" />
-		 <link rel="stylesheet" href="../common/css/tables-alternating.dark.css" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/styles/github.min.css" integrity="sha256-VU5niyfQ3bzKmyYpZcVfq76hPpAmc9QCoLhjhN3L0GQ=" crossorigin="anonymous" />
+        <link href="https://cdn.datatables.net/v/dt/dt-2.3.4/datatables.min.css" rel="stylesheet" integrity="sha384-pmGS6IIcXhAVIhcnh9X/mxffzZNHbuxboycGuQQoP3pAbb0SwlSUUHn2v22bOenI" crossorigin="anonymous" />
         <style>
             #back2Top {
                 width: 40px;
@@ -64,17 +64,46 @@
             #copy-box {
                 position: absolute;
                 top: 0px;
-                margin-left: 50px;
                 z-index: 100;
-                width: 420px;
+                max-width: 420px;
                 border-radius: 3px;
             }
             #copy-box-input {
-                width: 400px;
+                max-width: 400px;
+                width:100%;
             }
             .label-copy {
                 border-radius: 3px;
                 cursor: pointer;
+            }
+            .bg-info2 {
+                background: rgba(0,0,0,.17);
+            }
+            .bg-info2:hover,.bg-info2:focus {
+                background: rgba(0,0,0,.23) !important;
+            }
+            .dropdown-item {
+                display: block;
+                padding: .25rem 1rem;
+                clear: both;
+            }
+            .dropdown-menu {
+                min-width: 100px !important;
+            }
+            .hljs, .hljs-keyword, .hljs-selector-tag, .hljs-subst {
+                color: #666 !important;
+            }
+            .hljs-literal, .hljs-number, .hljs-tag .hljs-attr, .hljs-template-variable, .hljs-variable {
+                color: #00b0b0 !important;
+            }
+            .hljs-class .hljs-title, .hljs-type {
+                color:#888 !important;
+            }
+            .hljs-built_in, .hljs-builtin-name {
+                color:#00a6b3 !important;
+            }
+            img:not(.navbar-brand) {
+                zoom: 50%;
             }
         </style>
     </head>
@@ -84,16 +113,29 @@
             <!-- Header -->
             <header class="main-header">
                 <div class="logo">
-                        <a href="https://phantombot.github.io/PhantomBot/"><img class="navbar-brand" alt="PhantomBot" src="../common/images/logo.png" /> <span class="navbar-brand logo-lg"><b>Phantom</b>Bot</span></a>
-                        <button type="button" class="btn btn-primary" data-toggle="push-menu">
-                            <i class="fas fa-bars"></i>
-                        </button>
-                    </div>
+                    <a href="https://phantombot.github.io/PhantomBot/"><img class="navbar-brand" alt="PhantomBot" src="../common/images/logo.png" /> <span class="navbar-brand logo-lg"><b>Phantom</b>Bot</span></a>
+                    <button type="button" class="btn btn-primary" data-toggle="push-menu">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <button type="button" class="btn btn-primary" id="navbar-toggle">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                </div>
                 <nav class="navbar navbar-static-top">
                     <div class="container-fluid">
-
                         <!-- Collect the nav links, forms, and other content for toggling -->
                         <div class="collapse navbar-collapse" id="navbar-collapse">
+                            <ul class="nav navbar-nav">
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link bg-info2 rounded dropdown-toggle" href="#" id="version-dropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                        Stable
+                                    </a>
+                                    <div class="dropdown-menu" aria-labelledby="version-dropdown">
+                                        <a class="dropdown-item" href="#" id="version-dropdown-stable">Stable</a>
+                                        <a class="dropdown-item" href="#" id="version-dropdown-nightly">Nightly</a>
+                                    </div>
+                                </li>
+                            </ul>
                             <ul class="nav navbar-nav navbar-right">
                                 <li><a data-toggle="tooltip" data-placement="bottom" title="GitHub" href="https://github.com/PhantomBot/PhantomBot"><i class="fab fa-github fa-lg"></i></a></li>
                                 <li><a data-toggle="tooltip" data-placement="bottom" title="Discord" href="https://discord.gg/YKvMd78"><i class="fab fa-discord fa-lg"></i></a></li>
@@ -128,8 +170,7 @@
                         </div>
                         <div class="box-body">
                             <input type="text" id="copy-box-input" readonly="readonly" value="">
-                        </div>
-                    </div>
+                        </div>                     </div>
                     <div class="box">
                         <!-- /.box-header -->
                         <div class="box-body" id="content-pane">
@@ -137,8 +178,7 @@
                         </div>
                         <!-- /.box-body -->
                     </div>
-                    <!-- /.box -->
-                </div>
+                    <!-- /.box -->                 </div>
                 <div id="back2Top" title="Back to top">&#10148;</div>
             </aside>
             <footer class="main-footer">
@@ -147,69 +187,83 @@
         </div>
 
         <!-- Load jQuery -->
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js" integrity="sha512-+NqPlbbtM1QqiK8ZAo4Yrj2c4lNQoGv8P79DPtKzj++l5jnN39rHA/xsqn8zE9l0uSoxaCdrOgFs6yjyfbBxSg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
         <!-- Load Bootsrap 3.3.7 -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha256-U5ZEeKfGNOja007MMD3YBI0A3OSZOQbeG6z2f2Y0hu8=" crossorigin="anonymous"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/pace/1.0.2/pace.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/admin-lte/2.4.0/js/adminlte.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pace/1.0.2/pace.min.js" integrity="sha512-ePSfiGQMIzYzXVQLqWoVC3yxVEHIM5Y3EGh9jPNxpf+hPuLtzPdxJX+lTC3ziPMlDgc5OsM4JThxGwN2DkWEeA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/admin-lte/2.4.0/js/adminlte.min.js" integrity="sha512-4LW2vmg8t+drPiNqhkUrtVZ3M/UCyhEhVasHYx7d+mXKjcw/G0BSuQ78FnkzPyWU23QBXtTUrKoPmX95KTLE4A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+        <script src="https://cdn.datatables.net/v/dt/dt-2.3.4/datatables.min.js" integrity="sha384-X2pTSfom8FUa+vGQ+DgTCSyBZYkC1RliOduHa0X96D060s7Q//fnOh3LcazRNHyo" crossorigin="anonymous"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/remarkable/2.0.1/remarkable.min.js" integrity="sha256-blWQoMt0+lqHvv7q7wShOwoWOiQITkNA/Bssik2U/08=" crossorigin="anonymous"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/10.1.1/highlight.min.js" integrity="sha256-Uv3H6lx7dJmRfRvH8TH6kJD1TSK1aFcwgx+mdg3epi8=" crossorigin="anonymous"></script>
-        <script src="https://cdn.jsdelivr.net/gh/noticeable-app/remarkable-iframify@3f504ce11a587010cd4d098be18c931064c62861/index.js"></script>
         <script src="markdown-toc.js"></script>
         <script>
             'use strict';
             $(function () {
-                var lastPage = 'null';
+                let lastPage = 'null';
+                let currentPath = null;
+                let currentChannel = 'stable';
                 window.renderdata = '';
-                const { Remarkable, linkify, utils } = window.remarkable;
-                var hashmap = [];
-                var md = new Remarkable('full', {
-                    html: false, // Enable HTML tags in source
-                    xhtmlOut: false, // Use '/' to close single tags (<br />)
-                    breaks: false, // Convert '\n' in paragraphs into <br>
+                const {
+                    Remarkable,
+                    linkify,
+                    utils
+                } = window.remarkable;
+                let hashmap = [];
+                let headers = {};
+                let firstHeader = null;
+                let pastFirstHeader = false;
+                let md = new Remarkable('full', {
+                    html: true, // Enable HTML tags in source
+                    xhtmlOut: true, // Use '/' to close single tags (<br />)
+                    breaks: true, // Convert '\n' in paragraphs into <br>
                     langPrefix: 'language-', // CSS language prefix for fenced blocks
                     linkTarget: '', // set target to open link in
 
                     // Enable some language-neutral replacements + quotes beautification
                     typographer: true,
-
                     // Double + single quotes replacement pairs, when typographer enabled,
                     // and smartquotes on. Set doubles to '«»' for Russian, '„“' for German.
                     quotes: '“”‘’',
-
                     // Highlighter function. Should return escaped HTML,
                     // or '' if input not changed
                     highlight: function (str, lang) {
                         if (lang && hljs.getLanguage(lang)) {
                             try {
                                 return hljs.highlight(lang, str).value;
-                            } catch (__) {
-                            }
+                            } catch (__) {}
                         }
 
                         try {
                             return hljs.highlightAuto(str).value;
-                        } catch (__) {
-                        }
+                        } catch (__) {}
 
                         return ''; // use external default escaping
                     }
                 });
                 md.use(linkify);
-                md.use(window.iframify);
-                md.use(function(md) {
-                    md.renderer.rules.heading_open = function(tokens, idx) {
-                        return '<h' + tokens[idx].hLevel + ' id=' + slugify(tokens[idx + 1].content) + '>';
+                md.use(function (md) {
+                    md.renderer.rules.heading_open = function (tokens, idx) {
+                        updateHeaders(tokens[idx].hLevel, tokens[idx + 1].content, true);
+                        return '<h' + tokens[idx].hLevel + ' id=' + slugifyHeader() + '>';
                     };
-                    md.renderer.rules.heading_close = function(tokens, idx) {
-                        return ' <a style="cursor: pointer;" onclick="$(\'#copy-box\').css(\'top\', $(this).parent().offset().top + $(this).parent().outerHeight() + 5); $(\'#copy-box-input\').val(\'' + window.renderdata + '&jumpto=' + slugify(tokens[idx - 1].content) +'\'); $(\'#copy-box\').show();"><i class="fas fa-link"></i></a></h' + tokens[idx].hLevel + '>\n';
+                    md.renderer.rules.heading_close = function (tokens, idx) {
+                        updateHeaders(tokens[idx].hLevel, tokens[idx - 1].content, true);
+                        return ' <a style="cursor: pointer;" onclick="$(\'#copy-box\').css(\'top\', $(this).parent().offset().top + $(this).parent().outerHeight() + 5); $(\'#copy-box-input\').val(\'' + window.renderdata + '&jumpto=' + slugifyHeader() + '\'); $(\'#copy-box\').show();"><i class="fas fa-link"></i></a></h' + tokens[idx].hLevel + '>\n';
+                    };
+                    md.renderer.rules.old_link_open = md.renderer.rules.link_open;
+                    md.renderer.rules.link_open = function (tokens, idx, options) {
+                        if (tokens[idx].title && tokens[idx].title.toLowerCase() == '##guide_link') {
+                            return '<a href="#" onclick="window.loadGuideJump(\'' + tokens[idx].href + '&channel=' + currentChannel + '\')">';
+                        } else {
+                            return md.renderer.rules.old_link_open(tokens, idx, options);
+                        }
                     };
                 });
-                md.use(function(md) {
+                md.use(function (md) {
                     let footnoterefs = {};
-                    md.renderer.rules.footnote_ref = function(tokens, idx) {
-                        var n = Number(tokens[idx].id + 1).toString();
-                        var id = 'fnref' + n;
+                    md.renderer.rules.footnote_ref = function (tokens, idx) {
+                        let n = Number(tokens[idx].id + 1).toString();
+                        let id = 'fnref' + n;
                         if (tokens[idx].subId > 0) {
                             id += ':' + tokens[idx].subId;
                         }
@@ -217,39 +271,74 @@
                             footnoterefs[n] = 0;
                         }
                         footnoterefs[n]++;
-                        return '<sup class="footnote-ref"><a href="#fn' + n + '" id="' + id + '">[' + n + ']</a></sup>';
+                        return '<sup class="footnote-ref"><a href="#fn' + n + '" id="' + id + '">[' + n + ' ]</a></sup>';
                     };
-                    md.renderer.rules.footnote_anchor = function(tokens, idx) {
-                        var n = Number(tokens[idx].id + 1).toString();
+                    md.renderer.rules.footnote_anchor = function (tokens, idx) {
+                        let n = Number(tokens[idx].id + 1).toString();
                         if (footnoterefs.hasOwnProperty(n) && footnoterefs[n] > 10) {
                             return '';
                         }
-                        var id = 'fnref' + n;
+                        let id = 'fnref' + n;
                         if (tokens[idx].subId > 0) {
                             id += ':' + tokens[idx].subId;
                         }
                         return ' <a href="#' + id + '" class="footnote-backref">↩</a>';
                     };
                 });
-                
+                function updateHeaders(hLevel, content, isNotToc) {
+                    if (isNotToc && !pastFirstHeader && firstHeader !== null) {
+                        if (firstHeader[hLevel] === undefined || firstHeader[hLevel] === null || firstHeader[hLevel] !== slugify(content)) {
+                            return;
+                        }
+                    }
+
+                    pastFirstHeader = true;
+                    let newHeaders = {};
+                    for (let x in headers) {
+                        if (x < hLevel) {
+                            newHeaders[x] = headers[x];
+                        }
+                    }
+
+                    newHeaders[hLevel] = slugify(content);
+                    headers = newHeaders;
+                    if (firstHeader === null) {
+                        firstHeader = {};
+                        firstHeader[hLevel] = newHeaders[hLevel];
+                    }
+                }
+
+                function slugifyHeader() {
+                    let slug = "";
+                    for (let i = 1; i < 6; i++) {
+                        if (headers[i] !== undefined && headers[i] !== null) {
+                            if (slug.length > 0) {
+                                slug = slug + "_";
+                            }
+                            slug = slug + headers[i];
+                        }
+                    }
+
+                    return slug;
+                }
+
                 function slugify(content) {
                     content = content.replace(/youtube/ig, 'you-tube').replace(/vimeo/ig, 'vim-eo').replace(/vine/ig, 'vi-ne');
                     content = content.replace(/videopress/ig, 'video-press').replace(/wistia/ig, 'wis-tia');
                     let slug = window.markdownToc.slugify(content);
                     return encodeURIComponent(slug);
                 }
-
                 function loadMenuRecursive(path, tree) {
                     $.ajax(window.location.origin + window.location.pathname + path + 'toc.json', {
                         'dataType': 'json',
                         'global': false,
                         'async': false,
                         'success': function (data) {
-                            for (var x in data.subfolders) {
+                            for (let x in data.subfolders) {
                                 addMenuFolder(path, tree, x, data.subfolders[x]);
                                 loadMenuRecursive(path + x + '/', path.replace(/\//g, '-') + x + '-tree');
                             }
-                            for (var x in data.pages) {
+                            for (let x in data.pages) {
                                 addMenuItem(path, tree, x, data.pages[x]);
                             }
                         }
@@ -257,16 +346,15 @@
                 }
 
                 function addMenuItem(path, tree, file, title) {
-                    var elm = $('<li/>', {
+                    let elm = $('<li/>', {
                         'html': $('<a/>', {
                             'href': '#',
                             'onclick': 'window.loadGuide(\'' + path + file + '\');'
-                            }).append($('<i/>', {
+                        }).append($('<i/>', {
                                 'class': 'far ion fa-circle'
                             })).append(' ' + title),
                         'id': path.replace(/\//g, '-') + file + '-menuitem'
                     });
-
                     if (tree.length === 0) {
                         $('#guide-menu').prepend(elm);
                     } else {
@@ -280,24 +368,22 @@
                     }
 
                     $('#' + tree).append($('<li/>', {
-                        'class': 'treeview'
-                    }).append($('<a/>', {
-                        'href': '#',
-                        'text': title
-                        }).append($('<span/>', {
-                            'class': 'pull-right-container'
-                            }).append($('<i/>', {
-                                'class': 'fas fa-angle-left pull-right'
-                            }))
-                        )).append($('<ul/>', {
-                        'class': 'treeview-menu',
-                        'id': path.replace(/\//g, '-') + folder + '-tree'
-                    })));
+                            'class': 'treeview'
+                        }).append($('<a/>', {
+                                'href': '#',
+                                'text': title
+                            }).append($('<span/>', {
+                                    'class': 'pull-right-container'
+                                }).append($('<i/>', {
+                                        'class': 'fas fa-angle-left pull-right'
+                                    })))).append($('<ul/>', {
+                                'class': 'treeview-menu',
+                                'id': path.replace(/\//g, '-') + folder + '-tree'
+                            })));
                 }
 
                 function setActiveRecursive(path, removing) {
-                    var folder = path.substring(0, path.lastIndexOf('-'));
-
+                    let folder = path.substring(0, path.lastIndexOf('-'));
                     if (folder.includes('-')) {
                         if (removing) {
                             $('#' + folder + '-tree').removeClass('active');
@@ -310,21 +396,27 @@
                 }
 
                 function loadGuide(path) {
-                    Pace.track(function(){
+                    Pace.track(function () {
                         $.ajax(window.location.origin + window.location.pathname + path + '.md', {
                             'dataType': 'text',
+                            'cache': false,
                             'success': function (data) {
+                                const hasTable = data.includes('<!-- table -->');
+                                data = data.replace(/<!-- table -->/, '');
                                 data = data.replace(/<!-- toc -->/, '<!-- realtoc -->').replace(/<!-- tocstop -->/, '<!-- realtocstop -->');
                                 data = data.replace(/<!-- toc -->/ig, '<!-- faketoc -->').replace(/<!-- tocstop -->/ig, '<!-- faketocstop -->');
                                 data = data.replace(/<!-- realtoc -->/, '<!-- toc -->').replace(/<!-- realtocstop -->/, '<!-- tocstop -->');
+                                headers = {};
+                                firstHeader = null;
                                 data = window.markdownToc.insert(data, {
-                                    filter: function(str, ele, arr) {
+                                    filter: function (str, ele, arr) {
                                         ele.content = ele.content.replace(/`/g, '').replace(/:\*\*]/, '**]').replace(/:\]/, ']');
                                         return true;
                                     },
-                                    linkify: function(token, anchor, slug, opts) {
+                                    linkify: function (token, anchor, slug, opts) {
+                                        updateHeaders(token.lvl, token.content, false);
                                         let newhash = 'guide=' + path;
-                                        slug = slugify(token.content);
+                                        slug = slugifyHeader();
                                         for (let x in hashmap) {
                                             if (x !== 'jumpto' && x !== 'guide' && x.length > 0) {
                                                 if (newhash.length > 0) {
@@ -344,28 +436,41 @@
                                 data = data.replace(/<!-- faketoc -->/ig, '<!-- toc -->').replace(/<!-- faketocstop -->/ig, '<!-- tocstop -->');
                                 data = data.replace(/<!-- notoc # -->/ig, '#').replace(/<!-- notoc ## -->/ig, '##').replace(/<!-- notoc ### -->/ig, '###');
                                 data = data.replace(/<!-- notoc #### -->/ig, '####').replace(/<!-- notoc ##### -->/ig, '#####').replace(/<!-- notoc ###### -->/ig, '######');
-                                window.renderdata = window.location.href.substring(0, (window.location.href + "#").indexOf('#')) + '#guide=' + path;
+                                window.renderdata = window.location.href.substring(0, (window.location.href + "#").indexOf('#')) + '#guide=' + path + '&channel=' + currentChannel;
+                                headers = {};
+                                pastFirstHeader = false;
                                 $('#content-pane').html(md.render(data));
                                 $('#' + lastPage + '-menuitem').removeClass('active');
                                 setActiveRecursive(lastPage, true);
                                 setActiveRecursive(path.replace(/\//g, '-'), false);
                                 lastPage = path.replace(/\//g, '-');
-                                window.location.hash = 'guide=' + path;
+                                currentPath = path;
+                                window.location.hash = 'guide=' + path + '&channel=' + currentChannel;
                                 $('#' + lastPage + '-menuitem').addClass('active');
                                 jumpToHeader();
+                                if (hasTable) {
+                                    $('table').DataTable({
+                                        paging: false,
+                                        search: {
+                                            smart: false
+                                        }
+                                    });
+                                }
                             }
                         });
                     });
                 }
 
-                function parseHashMap() {
-                    var hash = window.location.hash.substr(1);
-                    var kvs = hash.split('&');
-                    var spl;
+                function parseHashMap(hash) {
+                    if (hash === undefined || hash === null) {
+                        hash = window.location.hash.slice(1);
+                    }
+                    let kvs = hash.split('&');
+                    let spl;
 
                     hashmap = [];
 
-                    for (var i = 0; i < kvs.length; i++) {
+                    for (let i = 0; i < kvs.length; i++) {
                         spl = kvs[i].split('=', 2);
                         hashmap[spl[0]] = spl[1];
                     }
@@ -373,7 +478,27 @@
 
                 function loadURLGuide() {
                     if (hashmap.hasOwnProperty('guide')) {
+                        checkURLChannel();
+                        if (currentChannel === 'stable' && hashmap['guide'].startsWith('content/')) {
+                            hashmap['guide'] = hashmap['guide'].replace('content/', 'content-stable/')
+                        } else if (currentChannel === 'nightly' && hashmap['guide'].startsWith('content-stable/')) {
+                            hashmap['guide'] = hashmap['guide'].replace('content-stable/', 'content/')
+                        }
                         loadGuide(hashmap['guide']);
+                        return true;
+                    }
+
+                    return false;
+                }
+
+                function loadGuideJump(guidePlusJumpto) {
+                    parseHashMap(guidePlusJumpto);
+                    loadURLGuide();
+                }
+
+                function checkURLChannel() {
+                    if (hashmap.hasOwnProperty('channel')) {
+                        currentChannel = hashmap['channel'];
                         return true;
                     }
 
@@ -393,7 +518,9 @@
                     }
 
                     window.location.hash = '#' + (newhash.length > 0 ? '' : 'jumpto=top' + new Date().getTime()) + newhash;
-                    $('header')[0].scrollIntoView({behavior: 'smooth'});
+                    $('header')[0].scrollIntoView({
+                        behavior: 'smooth'
+                    });
                 }
 
                 function jumpToHeader() {
@@ -405,41 +532,87 @@
                 function jumpTo(slug) {
                     let elm = $('#' + slug);
                     if (elm.length > 0) {
-                        elm[0].scrollIntoView({behavior: 'smooth'});
+                        elm[0].scrollIntoView({
+                            behavior: 'smooth'
+                        });
                     }
                 }
 
-                $(document).ajaxStart(function() { Pace.restart(); });
+                function changeChannel(channel) {
+                    let previousChannel = currentChannel;
+                    currentChannel = channel.toLowerCase();
+                    let changed = false;
+                    if (currentChannel === 'nightly' && currentPath.startsWith('content-stable/')) {
+                        changed = true;
+                    } else if (currentChannel === 'stable' && currentPath.startsWith('content/')) {
+                        changed = true;
+                    }
 
-                loadMenuRecursive('content/', '');
+                    if (changed) {
+                        hashmap['channel'] = currentChannel;
+                        $('#guide-menu').empty();
+                        loadMenuRecursive('content' + (currentChannel === 'nightly' ? '' : '-stable') + '/', '');
+                        loadGuide(currentPath.replace('content' + (currentChannel === 'stable' ? '' : '-stable') + '/', 'content' + (currentChannel === 'nightly' ? '' : '-stable') + '/'));
+                        $('#version-dropdown').text($('#version-dropdown-' + currentChannel).text());
+                        $('#version-dropdown-' + previousChannel).removeClass('bg-info');
+                        $('#version-dropdown-' + currentChannel).addClass('bg-info');
+                    }
+                }
+
+                $(document).ajaxStart(function () {
+                    Pace.restart();
+                });
 
                 parseHashMap();
+
+                checkURLChannel();
+
+                loadMenuRecursive('content' + (currentChannel === 'nightly' ? '' : '-stable') + '/', '');
                 if (!loadURLGuide()) {
-                    loadGuide('content/guides');
+                    loadGuide('content' + (currentChannel === 'nightly' ? '' : '-stable') + '/guides');
                 }
 
                 window.loadGuide = loadGuide;
+                window.loadGuideJump = loadGuideJump;
 
-                $(window).bind('hashchange', function() {
+                $(window).bind('hashchange', function () {
                     parseHashMap();
                     jumpToHeader();
                 });
 
-                $(window).scroll(function() {
-                    var height = $(window).scrollTop();
+                $(window).scroll(function () {
+                    let height = $(window).scrollTop();
                     if (height > 100) {
                         $('#back2Top').fadeIn();
                     } else {
                         $('#back2Top').fadeOut();
                     }
                 });
-                $(document).ready(function() {
-                    $("#back2Top").click(function(event) {
+                $(document).ready(function () {
+                    $('#navbar-toggle').click(function () {
+                        event.preventDefault();
+                        $('#navbar-collapse').collapse('toggle');
+                        return false;
+                    });
+                    $("#back2Top").click(function (event) {
                         event.preventDefault();
                         jumpToTop();
                         return false;
                     });
-
+                    $('#version-dropdown-stable').click(function () {
+                        event.preventDefault();
+                        changeChannel('stable');
+                        $('#version-dropdown').dropdown('toggle');
+                        return false;
+                    });
+                    $('#version-dropdown-nightly').click(function () {
+                        event.preventDefault();
+                        changeChannel('nightly');
+                        $('#version-dropdown').dropdown('toggle');
+                        return false;
+                    });
+                    $('#version-dropdown').text($('#version-dropdown-' + currentChannel).text());
+                    $('#version-dropdown-' + currentChannel).addClass('bg-info');
                 });
 
                 $('[data-toggle="tooltip"]').tooltip();

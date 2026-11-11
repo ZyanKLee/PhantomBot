@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,11 +16,28 @@
  */
 package tv.phantombot.httpserver;
 
+import java.io.IOException;
+import java.net.URLDecoder;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+import com.gmt2001.PathValidator;
 import com.gmt2001.httpwsserver.HTTPWSServer;
 import com.gmt2001.httpwsserver.HttpRequestHandler;
 import com.gmt2001.httpwsserver.HttpServerPageHandler;
 import com.gmt2001.httpwsserver.auth.HttpAuthenticationHandler;
 import com.gmt2001.httpwsserver.auth.HttpNoAuthenticationHandler;
+import com.gmt2001.util.Reflect;
+import com.mcawful.PanelPasskeyHandler;
+
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
@@ -28,26 +45,12 @@ import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.QueryStringDecoder;
-import java.io.IOException;
-import java.nio.charset.Charset;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
-import java.util.Map;
-import tv.phantombot.PhantomBot;
 
 /**
  *
  * @author gmt2001
  */
 public class HTTPNoAuthHandler implements HttpRequestHandler {
-
-    public HTTPNoAuthHandler() {
-    }
 
     @Override
     public HttpRequestHandler register() {
@@ -65,45 +68,70 @@ public class HTTPNoAuthHandler implements HttpRequestHandler {
 
     @Override
     public void handleRequest(ChannelHandlerContext ctx, FullHttpRequest req) {
+        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
+
         if (req.uri().startsWith("/presence")) {
             FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, "PBok".getBytes(), null);
             String origin = req.headers().get(HttpHeaderNames.ORIGIN);
             if (origin != null && !origin.isBlank()) {
                 res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
             }
-            com.gmt2001.Console.debug.println("200");
+            com.gmt2001.Console.debug.println("200 " + req.method().asciiName() + ": " + qsd.path());
             HttpServerPageHandler.sendHttpResponse(ctx, req, res);
             return;
         }
 
         if (req.uri().startsWith("/sslcheck")) {
-            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, (HTTPWSServer.instance().isSsl() ? "true" : "false").getBytes(), null);
+            boolean isSsl = HTTPWSServer.instance().isSsl();
+            if (req.headers().contains(HTTPWSServer.HEADER_X_FORWARDED_HOST) || req.headers().contains(HTTPWSServer.HEADER_CF_RAY)) {
+                isSsl = true;
+            }
+
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, (isSsl ? "true" : "false").getBytes(), null);
             String origin = req.headers().get(HttpHeaderNames.ORIGIN);
             if (origin != null && !origin.isBlank()) {
                 res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
             }
-            com.gmt2001.Console.debug.println("200");
+            com.gmt2001.Console.debug.println("200 " + req.method().asciiName() + ": " + qsd.path());
+            HttpServerPageHandler.sendHttpResponse(ctx, req, res);
+            return;
+        }
+
+        if (req.uri().startsWith("/passkeycheck")) {
+            boolean isSsl = HTTPWSServer.instance().isSsl();
+            if (req.headers().contains(HTTPWSServer.HEADER_X_FORWARDED_HOST) || req.headers().contains(HTTPWSServer.HEADER_CF_RAY)) {
+                isSsl = true;
+            }
+
+            String origin = req.headers().get(HttpHeaderNames.ORIGIN);
+
+            // Browsers send no Origin on a same-origin GET, so localhost is read from the Host header, without the port
+            boolean isLocalhost = req.headers().get(HttpHeaderNames.HOST, "").replaceFirst(":\\d*$", "").equalsIgnoreCase("localhost");
+            boolean isProxied = req.headers().contains(HTTPWSServer.HEADER_X_FORWARDED_HOST) || req.headers().contains(HTTPWSServer.HEADER_CF_RAY);
+
+            boolean allowpasskey = (isSsl || isLocalhost) && (!HTTPWSServer.instance().isAutoSsl() || isProxied);
+
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, (allowpasskey ? "true" : "false").getBytes(), null);
+            if (origin != null && !origin.isBlank()) {
+                res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+            }
+            com.gmt2001.Console.debug.println("200 " + req.method().asciiName() + ": " + qsd.path());
             HttpServerPageHandler.sendHttpResponse(ctx, req, res);
             return;
         }
 
         if (req.headers().contains("password") || req.headers().contains("webauth") || new QueryStringDecoder(req.uri()).parameters().containsKey("webauth")) {
-            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.SEE_OTHER, null, null);
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.SEE_OTHER);
 
-            String host = req.headers().get(HttpHeaderNames.HOST);
+            res.headers().set(HttpHeaderNames.LOCATION, "/dbquery");
 
-            if (host == null) {
-                host = "";
-            } else if (HTTPWSServer.instance().isSsl()) {
-                host = "https://" + host;
-            } else {
-                host = "http://" + host;
-            }
-
-            res.headers().set(HttpHeaderNames.LOCATION, host + "/dbquery");
-
-            com.gmt2001.Console.debug.println("303");
+            com.gmt2001.Console.debug.println("303 " + req.method().asciiName() + ": " + qsd.path());
             HttpServerPageHandler.sendHttpResponse(ctx, req, res);
+            return;
+        }
+
+        if (req.uri().startsWith("/panel/login/passkey/")) {
+            PanelPasskeyHandler.handleHttp(ctx, req);
             return;
         }
 
@@ -118,10 +146,10 @@ public class HTTPNoAuthHandler implements HttpRequestHandler {
 
                 user = post.getOrDefault("user", "");
                 pass = post.getOrDefault("pass", "");
-                kickback = post.getOrDefault("kickback", "");
+                kickback = URLDecoder.decode(post.getOrDefault("kickback", ""), StandardCharsets.UTF_8);
             }
 
-            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.SEE_OTHER, null, null);
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.SEE_OTHER);
 
             if (req.uri().contains("logout=true")) {
                 res.headers().add(HttpHeaderNames.SET_COOKIE, "panellogin=" + (HTTPWSServer.instance().isSsl() ? "; Secure" + sameSite : "")
@@ -131,61 +159,51 @@ public class HTTPNoAuthHandler implements HttpRequestHandler {
                         + (HTTPWSServer.instance().isSsl() ? "; Secure" + sameSite : "") + "; HttpOnly; Path=/");
             }
 
-            String host = req.headers().get(HttpHeaderNames.HOST);
-
-            if (host == null) {
-                host = "";
-            } else if (HTTPWSServer.instance().isSsl()) {
-                host = "https://" + host;
-            } else {
-                host = "http://" + host;
-            }
-
             if (kickback.isBlank()) {
                 kickback = "/panel";
             }
 
-            res.headers().set(HttpHeaderNames.LOCATION, host + kickback);
-            com.gmt2001.Console.debug.println("303");
+            res.headers().set(HttpHeaderNames.LOCATION, kickback);
+            com.gmt2001.Console.debug.println("303 " + req.method().asciiName() + ": " + qsd.path());
 
             HttpServerPageHandler.sendHttpResponse(ctx, req, res);
             return;
         }
 
         if (!req.method().equals(HttpMethod.GET) && !req.method().equals(HttpMethod.HEAD)) {
-            com.gmt2001.Console.debug.println("403");
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, null, null));
+            com.gmt2001.Console.debug.println("405 " + req.method().asciiName() + ": " + qsd.path());
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.METHOD_NOT_ALLOWED));
             return;
         }
-
-        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
 
         try {
             String start = "./web/";
             String path = qsd.path();
 
-            if (path.startsWith("/config/audio-hooks") || path.startsWith("/config/gif-alerts") || path.startsWith("/addons")) {
+            if (path.startsWith("/config/audio-hooks") || path.startsWith("/config/gif-alerts") || path.startsWith("/addons") || path.startsWith("/config/clips") || path.startsWith("/config/emotes")) {
                 start = ".";
             }
 
             Path p = Paths.get(start, path);
 
-            if (path.endsWith("/") || Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) {
+            if (path.endsWith("/") || Files.isDirectory(p)) {
                 path = path + "/index.html";
                 p = Paths.get(start, path);
             }
 
-            if ((!p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./web"))
-                    && !p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./addons"))
-                    && !p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./config/audio-hooks"))
-                    && !p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./config/gif-alerts")))
-                    || (p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./web/panel"))
-                    && !p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./web/panel/vendors"))
-                    && !p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./web/panel/css"))
-                    && !p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./web/panel/login")))
-                    || p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./web/ytplayer"))) {
+            if (!PathValidator.isValidPathWeb(p.toString()) || (!p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./web"))
+                    && !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./addons"))
+                    && !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./config/audio-hooks"))
+                    && !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./config/clips"))
+                    && !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./config/emotes"))
+                    && !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./config/gif-alerts")))
+                    || (p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./web/panel"))
+                    && !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./web/panel/vendors"))
+                    && !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./web/panel/css"))
+                    && !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./web/panel/login")))
+                    || p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./web/ytplayer"))) {
                 com.gmt2001.Console.debug.println("403 " + req.method().asciiName() + ": " + p.toString());
-                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, null, null));
+                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN));
                 return;
             }
 
@@ -195,14 +213,18 @@ public class HTTPNoAuthHandler implements HttpRequestHandler {
                 } else {
                     com.gmt2001.Console.debug.println("200 " + req.method().asciiName() + ": " + p.toString() + " (" + p.getFileName().toString() + " = "
                             + HttpServerPageHandler.detectContentType(p.getFileName().toString()) + ")");
-                    HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK,
-                            req.method().equals(HttpMethod.HEAD) ? null : Files.readAllBytes(p), p.getFileName().toString()));
+                    Map<CharSequence, Object> headers = Collections.emptyMap();
+                    String origin = req.headers().get(HttpHeaderNames.ORIGIN);
+                    if (origin != null && !origin.isBlank()) {
+                        headers = Map.of(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+                    }
+                    HttpServerPageHandler.sendFile(ctx, req, p, headers);
                 }
             }
         } catch (IOException ex) {
-            com.gmt2001.Console.debug.println("500");
+            com.gmt2001.Console.debug.println("500 " + req.method().asciiName() + ": " + qsd.path());
             com.gmt2001.Console.debug.printStackTrace(ex);
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
         }
     }
 
@@ -248,16 +270,21 @@ public class HTTPNoAuthHandler implements HttpRequestHandler {
                         + "<span>" + data.substring(0, Math.min(data.length(), len)) + "&nbsp;</span>"
                         + "</div></div></body></html>";
             } else {
-                ret = "<html><head><meta http-equiv=\"refresh\" content=\"5\" /></head><body>" + Files.readString(p) + "</body></html>";
+                ret = "<html><head><meta http-equiv=\"refresh\" content=\"5\" /></head><body>" + (qsd.parameters().containsKey("span") ? "<span>" : "") + Files.readString(p) + (qsd.parameters().containsKey("span") ? "</span>" : "") + "</body></html>";
             }
 
             com.gmt2001.Console.debug.println("200 " + req.method().asciiName() + ": " + p.toString() + " (" + p.getFileName().toString() + " = "
                     + HttpServerPageHandler.detectContentType("html") + ")");
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, ret.getBytes(Charset.forName("UTF-8")), "html"));
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, ret.getBytes(Charset.forName("UTF-8")), "html");
+            String origin = req.headers().get(HttpHeaderNames.ORIGIN);
+            if (origin != null && !origin.isBlank()) {
+                res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+            }
+            HttpServerPageHandler.sendHttpResponse(ctx, req, res);
         } catch (NumberFormatException | IOException ex) {
             com.gmt2001.Console.debug.println("500");
             com.gmt2001.Console.debug.printStackTrace(ex);
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
         }
     }
 

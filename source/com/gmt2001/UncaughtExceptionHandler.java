@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,61 +16,76 @@
  */
 package com.gmt2001;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.io.Writer;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.TimeZone;
-import tv.phantombot.PhantomBot;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.List;
+
+import com.gmt2001.util.Reflect;
+import com.illusionaryone.Logger;
+import tv.phantombot.CaselessProperties;
 
 /**
+ * Catches exceptions which have not been caught elsewhere
  *
  * @author gmt2001
  */
-public class UncaughtExceptionHandler implements Thread.UncaughtExceptionHandler {
+public final class UncaughtExceptionHandler implements Thread.UncaughtExceptionHandler {
 
-    private static final UncaughtExceptionHandler instance = new UncaughtExceptionHandler();
+    private static final UncaughtExceptionHandler INSTANCE = new UncaughtExceptionHandler();
 
+    /**
+     * Instance
+     *
+     * @return an instance
+     */
     public static UncaughtExceptionHandler instance() {
-        return instance;
+        return INSTANCE;
     }
 
+    /**
+     * Handles uncaught exceptions
+     * <p>
+     * In addition to sending to the regular error handler (Console, {@code core-error} log),
+     * the exception is logged in the {@code stacktraces} folder
+     * <p>
+     * If the exception is an {@link java.lang.OutOfMemoryError}, then a heap dump is additionally created
+     *
+     * @param t the thread on which the exception was thrown
+     * @param e the exception that was thrown
+     */
     @Override
     public void uncaughtException(Thread t, Throwable e) {
-        Writer trace = new StringWriter();
-        PrintWriter ptrace = new PrintWriter(trace);
+        try ( Writer trace = new StringWriter()) {
+            try ( PrintWriter ptrace = new PrintWriter(trace)) {
 
-        e.printStackTrace(ptrace);
-        com.gmt2001.Console.err.printStackTrace(e, true);
+                e.printStackTrace(ptrace);
 
-        try {
-            if (!new File ("./logs/stacktraces").exists()) {
-                new File ("./logs/stacktraces/").mkdirs();
+                /**
+                 * @botproperty dumpheaponoom - If `false`, PhantomBot will not attempt to create a heap dump when an `OutOfMemoryError` occurs. Defaults to `true`.
+                 * @botpropertycatsort dumpheaponoom 900 900 Debug
+                 */
+                if (e.getClass().equals(java.lang.OutOfMemoryError.class) && CaselessProperties.instance().getPropertyAsBoolean("dumpheaponoom", true)) {
+                    Reflect.dumpHeap();
+                    com.gmt2001.Console.err.println("OutOfMemoryError: Heap Dump Created");
+                }
+
+                com.gmt2001.Console.err.printStackTrace(e, true);
+
+                String timestamp = Logger.instance().logFileTimestamp();
+
+                Path p = PathValidator.getRealPath(Paths.get("./logs/stacktraces/" + timestamp + ".txt"));
+                Files.createDirectories(p.getParent());
+
+                Files.write(p, List.of("[" + timestamp + "] " + trace.toString()), StandardCharsets.UTF_8, StandardOpenOption.CREATE,
+                        StandardOpenOption.APPEND, StandardOpenOption.WRITE);
             }
-
-            SimpleDateFormat datefmt = new SimpleDateFormat("dd-MM-yyyy");
-            datefmt.setTimeZone(TimeZone.getTimeZone(PhantomBot.getTimeZone()));
-            String timestamp = datefmt.format(new Date());
-
-            try (FileOutputStream fos = new FileOutputStream("./logs/stacktraces/" + timestamp + ".txt", true)) {
-                PrintStream ps = new PrintStream(fos);
-
-                datefmt = new SimpleDateFormat("MM-dd-yyyy @ HH:mm:ss.SSS z");
-                datefmt.setTimeZone(TimeZone.getTimeZone(PhantomBot.getTimeZone()));
-
-                timestamp = datefmt.format(new Date());
-
-                ps.println("[" + timestamp + "] " + trace.toString());
-                ps.println();
-            }
-        } catch (FileNotFoundException ex) {
-            com.gmt2001.Console.err.printStackTrace(ex);
         } catch (IOException ex) {
             com.gmt2001.Console.err.printStackTrace(ex);
         }

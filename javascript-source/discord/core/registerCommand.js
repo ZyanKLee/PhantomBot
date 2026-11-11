@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -90,7 +90,7 @@
         // The script sometimes load before discord, so add this.
         while (!$.inidb.exists('discordPermsObj', 'obj')) {
             try {
-                java.lang.Thread.sleep(1000);
+                Packages.java.lang.Thread.sleep(1000);
             } catch (ex) {
                 $.log.error('Failed to set permission on Discord command as Discord is not connected. Please restart PhantomBot.');
                 return;
@@ -106,7 +106,7 @@
         };
 
         for (var i = 0; i < discordRoles.size(); i++) {
-            if (discordRoles.get(i).getName().equalsIgnoreCase('@everyone')) {
+            if ($.equalsIgnoreCase(discordRoles.get(i).getName(), '@everyone')) {
                 everyoneRoleID = discordRoles.get(i).getId().asString();
                 break;
             }
@@ -210,7 +210,7 @@
 
     function updateCommandChannel(command) {
         if (commandExists(command)) {
-            commands[command].channels = ($.inidb.exists('discordChannelcom', command) ? $.inidb.get('discordChannelcom', command) : '');
+            commands[command].channels = $.getIniDbString('discordChannelcom', command, '');
         }
     }
 
@@ -261,17 +261,13 @@
      */
     function registerCommand(scriptFile, command, permission) {
         if (!commandExists(command)) {
-            if ($.inidb.exists('discordPermcom', command)) {
-                permission = $.getIniDbString('discordPermcom', command);
-            } else {
-                permission = $.getSetIniDbString('discordPermcom', command, getJSONCommandPermission(command, permission));
-            }
+            permission = $.getSetIniDbString('discordPermcom', command, getJSONCommandPermission(command, permission));
 
             commands[command] = {
                 permission: getJSONCommandPermission(command, permission),
-                cost: ($.inidb.exists('discordPricecom', command) ? $.inidb.get('discordPricecom', command) : 0),
-                alias: ($.inidb.exists('discordAliascom', command) ? $.inidb.get('discordAliascom', command) : ''),
-                channels: ($.inidb.exists('discordChannelcom', command) ? $.inidb.get('discordChannelcom', command) : ''),
+                cost: $.getIniDbNumber('discordPricecom', command, 0),
+                alias: $.getIniDbString('discordAliascom', command, ''),
+                channels: $.getIniDbString('discordChannelcom', command, ''),
                 scriptFile: scriptFile,
                 subCommand: {}
             };
@@ -293,11 +289,7 @@
      */
     function registerSubCommand(command, subCommand, permission) {
         if (commandExists(command) && !subCommandExists(command, subCommand)) {
-            if ($.inidb.exists('discordPermcom', command)) {
-                permission = $.getIniDbString('discordPermcom', command);
-            } else {
-                permission = $.getSetIniDbString('discordPermcom', command, getJSONCommandPermission(command, permission));
-            }
+            permission = $.getSetIniDbString('discordPermcom', command, getJSONCommandPermission(command, permission));
 
             commands[command].subCommand[subCommand] = {
                 permission: getJSONCommandPermission((command + ' ' + subCommand), permission)

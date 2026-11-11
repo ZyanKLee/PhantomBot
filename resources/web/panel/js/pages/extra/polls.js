@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -67,7 +67,7 @@ $(function () {
      */
     const updateChart = function () {
         socket.getDBValue('get_poll_active_update', 'pollPanel', 'isActive', function (e) {
-            if (e.pollPanel === 'false' || e.pollPanel === null) {
+            if (!helpers.isTrue(e.pollPanel) || e.pollPanel === null) {
                 isActive = false;
                 return;
             } else if (chartConfig.data.datasets[0].backgroundColor.length !== 0 && isActive === false) {
@@ -207,6 +207,24 @@ $(function () {
                 }).modal('toggle');
     });
 
+    // Browser source button on click.
+    $('#copy-poll-obs').on('click', function() {
+        helpers.getModal('poll-obs', 'OBS Browser Source', 'Copy', $('<form/>', {
+            'role': 'form'
+        })
+            // Append options.
+            .append(helpers.getInputGroup('poll-obs-copy', 'text', 'Browser Source URL', '', window.location.protocol + '//' + window.location.host + '/obs/poll-chart',
+                'Copy Browser Source URL for OBS.', true)),
+            function() {
+                // Copy to user clipboard
+                $('#poll-obs-copy').prop('disabled', false);
+                $('#poll-obs-copy').select();
+                document.execCommand('copy');
+
+                $('#poll-obs').modal('toggle');
+            }).modal('toggle');
+    });
+
     // Module toggle.
     $('#pollSystemModuleToggle').on('change', function () {
         socket.sendCommandSync('poll_system_module_toggle_cmd',
@@ -225,7 +243,7 @@ $(run = function () {
             $('#twitch-chat-poll').find('iframe').remove();
             return;
         }
-        if (location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
+        if (helpers.canEmbedTwitch()) {
             // Add Twitch chat.
             $('#twitch-chat-poll').html($('<iframe/>', {
                 'frameborder': '0',
@@ -234,7 +252,7 @@ $(run = function () {
                 'src': 'https://www.twitch.tv/embed/' + getChannelName() + '/chat' + (helpers.isDark ? '?darkpopout&' : '?') + 'parent=' + location.hostname
             }));
         } else {
-            $('#twitch-chat-poll').html('Due to changes by Twitch, the chat panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
+            $('#twitch-chat-poll').html(helpers.CANT_EMBED_TWITCH_TEXT);
             $('#twitch-chat-poll').addClass('box-body');
         }
     });

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,74 +16,21 @@
  */
 package tv.phantombot.event.emotes;
 
-import org.json.JSONObject;
+import tv.phantombot.cache.EmotesCache;
+
+import java.util.List;
 
 public class EmotesGetEvent extends EmotesEvent {
-    private final JSONObject twitchEmotes;
-    private final JSONObject bttvEmotes;
-    private final JSONObject bttvLocalEmotes;
-    private final JSONObject ffzEmotes;
-    private final JSONObject ffzLocalEmotes;
+    private final List<EmotesCache.EmotesSet> emotesSet;
 
-    /**
-     * Class constructor
-     *
-     * @param {JSONObject} twitchEmotes
-     * @param {JSONObject} bttvEmotes
-     * @param {JSONObject} bttvLocalEmotes
-     * @param {JSONObject} ffzEmotes
-     * @param {JSONObject} ffzLocalEmotes
-     */
-    public EmotesGetEvent(JSONObject twitchEmotes, JSONObject bttvEmotes, JSONObject bttvLocalEmotes, JSONObject ffzEmotes, JSONObject ffzLocalEmotes) {
-        this.twitchEmotes = twitchEmotes;
-        this.bttvEmotes = bttvEmotes;
-        this.bttvLocalEmotes = bttvLocalEmotes;
-        this.ffzEmotes = ffzEmotes;
-        this.ffzLocalEmotes = ffzLocalEmotes;
+    public EmotesGetEvent(List<EmotesCache.EmotesSet> emotesSet) {
+        if (emotesSet == null) {
+            throw new IllegalArgumentException("EmotesSet cannot be null");
+        }
+        this.emotesSet = emotesSet;
     }
 
-    /**
-     * Method that returns the JSONObject emotes from Twitch.
-     *
-     * @param {JSONObject} twitchEmotes
-     */
-    public JSONObject getTwitchEmotes() {
-        return this.twitchEmotes;
-    }
-
-    /**
-     * Method that returns the JSONObject emotes from bttv.
-     *
-     * @param {JSONObject} bttvEmotes
-     */
-    public JSONObject getBttvEmotes() {
-        return this.bttvEmotes;
-    }
-
-    /**
-     * Method that returns the JSONObject emotes from bttv local emotes.
-     *
-     * @param {JSONObject} bttvLocalEmotes
-     */
-    public JSONObject getBttvLocalEmotes() {
-        return this.bttvLocalEmotes;
-    }
-
-    /**
-     * Method that returns the JSONObject emotes from ffz.
-     *
-     * @param {JSONObject} ffzEmotes
-     */
-    public JSONObject getFfzEmotes() {
-        return this.ffzEmotes;
-    }
-
-    /**
-     * Method that returns the JSONObject emotes from ffz local emotes.
-     *
-     * @param {JSONObject} ffzLocalEmotes
-     */
-    public JSONObject getFfzLocalEmotes() {
-        return this.ffzLocalEmotes;
+    public List<EmotesCache.EmotesSet> getEmotesSet() {
+        return this.emotesSet;
     }
 }

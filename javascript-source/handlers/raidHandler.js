@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,12 +16,15 @@
  */
 
 (function () {
-    var raidToggle = $.getSetIniDbBoolean('raidSettings', 'raidToggle', false),
+    let raidToggle = $.getSetIniDbBoolean('raidSettings', 'raidToggle', false),
             newRaidIncMessage = $.getSetIniDbString('raidSettings', 'newRaidIncMessage', '(username) is raiding us with (viewers) viewers!'),
             raidIncMessage = $.getSetIniDbString('raidSettings', 'raidIncMessage', '(username) is raiding us with (viewers) viewers! This is the (times) time (username) has raided us!'),
+            raidIncMinViewers = $.getSetIniDbNumber('raidSettings', 'raidMinViewers', 0),
             raidReward = $.getSetIniDbNumber('raidSettings', 'raidReward', 0),
             raidOutMessage = $.getSetIniDbString('raidSettings', 'raidOutMessage', 'We are going to raid (username)! Go to their channel (url) now!'),
-            raidOutSpam = $.getSetIniDbNumber('raidSettings', 'raidOutSpam', 1);
+            raidOutSpam = $.getSetIniDbNumber('raidSettings', 'raidOutSpam', 1),
+            raidOutOfflineMessage = $.getSetIniDbString('raidSettings', 'raidOutOfflineMessage', null),
+            shoutoutApi = $.getSetIniDbBoolean('raidSettings', 'shoutoutapi', false);
 
     /*
      * @function Reloads the raid variables from the panel.
@@ -30,9 +33,12 @@
         raidToggle = $.getIniDbBoolean('raidSettings', 'raidToggle');
         newRaidIncMessage = $.getIniDbString('raidSettings', 'newRaidIncMessage');
         raidIncMessage = $.getIniDbString('raidSettings', 'raidIncMessage');
+        raidIncMinViewers = $.getSetIniDbNumber('raidSettings', 'raidMinViewers', 0);
         raidReward = $.getIniDbNumber('raidSettings', 'raidReward');
         raidOutMessage = $.getIniDbString('raidSettings', 'raidOutMessage');
         raidOutSpam = $.getIniDbNumber('raidSettings', 'raidOutSpam');
+        raidOutOfflineMessage = $.getIniDbString('raidSettings', 'raidOutOfflineMessage');
+        shoutoutApi = $.getSetIniDbBoolean('raidSettings', 'shoutoutapi');
     }
 
     /*
@@ -53,12 +59,6 @@
             raidObj.lastRaidTime = $.systemTime();
             // Last raid viewers.
             raidObj.lastRaidViewers = viewers;
-            // Push this raid to the raids array.
-            //raidObj.raids.push({
-            //    time: $.systemTime(),
-            //    viewers: viewers,
-            //    username: username
-            //});
         } else {
             // Increase total raids.
             raidObj.totalRaids = '1';
@@ -68,14 +68,6 @@
             raidObj.lastRaidTime = $.systemTime();
             // Last raid viewers.
             raidObj.lastRaidViewers = viewers;
-            // Create new raid array.
-            //raidObj.raids = [];
-            // Push this raid to the raids array.
-            //raidObj.raids.push({
-            //    time: $.systemTime(),
-            //    viewers: viewers,
-            //    username: username
-            //});
         }
 
         // Save the new object.
@@ -122,10 +114,14 @@
      */
     function handleOutRaid(username) {
         var message = raidOutMessage;
+        var offlinemsg = raidOutOfflineMessage;
+
+        // Use the .raid command.
+        $.say('.raid ' + username);
 
         // Replace tags.
         if (message.match(/\(username\)/)) {
-            message = $.replace(message, '(username)', $.username.resolve(username));
+            message = $.replace(message, '(username)', $.viewer.getByLogin(username).name());
         }
 
         if (message.match(/\(url\)/)) {
@@ -137,9 +133,11 @@
             $.say(message);
         }
 
-        // Use the .raid command.
-        $.say('.raid ' + username);
-        // Increase out going raids.
+        if(!$.isOnline(username)){
+            $.say(offlinemsg);
+        }
+
+        // Increment outgoing raids count for this target channel.
         saveOutRaidForUsername(username + '', $.getViewers($.channelName) + '');
     }
 
@@ -147,19 +145,21 @@
      * @event twitchRaid
      */
     $.bind('twitchRaid', function (event) {
-        var username = event.getUsername(),
-                viewers = event.getViewers(),
-                hasRaided = false,
-                raidObj,
-                message;
+        let username = event.getUsername(),
+            viewers = event.getViewers(),
+            hasRaided = false,
+            raidObj,
+            message;
 
-        if (raidToggle === true) {
+        if (raidToggle === true && viewers >= raidIncMinViewers) {
             // If the user has raided before.
-            if ((hasRaided = $.inidb.exists('incoming_raids', username))) {
+            let incRaids = $.optIniDbString('incoming_raids', username);
+            if (incRaids.isPresent()) {
+                hasRaided = true;
                 // Set the message.
                 message = raidIncMessage;
                 // Get the raid object.
-                raidObj = JSON.parse($.getIniDbString('incoming_raids', username));
+                raidObj = JSON.parse(incRaids.get());
             } else {
                 message = newRaidIncMessage;
             }
@@ -193,28 +193,28 @@
                 var filename = message.match(/\(alert ([,.\w\W]+)\)/)[1];
                 $.alertspollssocket.alertImage(filename);
                 message = (message + '').replace(/\(alert [,.\w\W]+\)/, '');
-                if (message == '') {
-                    return null;
-                }
             }
 
             if (message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/g)) {
                 if (!$.audioHookExists(message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1])) {
                     $.log.error('Could not play audio hook: Audio hook does not exist.');
-                    return null;
+                } else {
+                    $.alertspollssocket.triggerAudioPanel(message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1]);
                 }
-                $.alertspollssocket.triggerAudioPanel(message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1]);
                 message = $.replace(message, message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[0], '');
-                if (message == '') {
-                    return null;
-                }
             }
 
-            $.say(message);
+            if (message !== '') {
+                $.say(message);
+            }
+
+            if (shoutoutApi) {
+                $.say('/shoutout ' + username);
+            }
         }
 
         // Add reward.
-        if (raidReward > 0) {
+        if (raidReward > 0 && viewers >= raidIncMinViewers) {
             $.inidb.incr('points', username, raidReward);
         }
 
@@ -227,12 +227,12 @@
      */
     $.bind('command', function (event) {
         var sender = event.getSender(),
-                command = event.getCommand(),
-                args = event.getArgs(),
-                action = args[0],
-                subAction = args[1];
+            command = event.getCommand(),
+            args = event.getArgs(),
+            action = args[0],
+            subAction = args[1];
 
-        if (command.equalsIgnoreCase('raid')) {
+        if ($.equalsIgnoreCase(command, 'raid')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.usage'));
                 return;
@@ -241,7 +241,7 @@
             /*
              * @commandpath raid toggle - Toggles if the bot should welcome raiders.
              */
-            if (action.equalsIgnoreCase('toggle')) {
+            if ($.equalsIgnoreCase(action, 'toggle')) {
                 raidToggle = !raidToggle;
                 $.setIniDbBoolean('raidSettings', 'raidToggle', raidToggle);
                 $.say($.whisperPrefix(sender) + (raidToggle ? $.lang.get('raidhandler.toggle.enabled') : $.lang.get('raidhandler.toggle.disabled')));
@@ -249,9 +249,19 @@
             }
 
             /*
+             * @commandpath raid toggleshoutout - Toggles if the bot should trigger the shoutout API for the raiding channel.
+             */
+            if ($.equalsIgnoreCase(action, 'toggleshoutout')) {
+                shoutoutApi = !shoutoutApi;
+                $.setIniDbBoolean('raidSettings', 'shoutoutapi', shoutoutApi);
+                $.say($.whisperPrefix(sender) + (shoutoutApi ? $.lang.get('raidhandler.shoutout.enabled') : $.lang.get('raidhandler.shoutout.disabled')));
+                return;
+            }
+
+            /*
              * @commandpath raid setreward [amount] - Sets the amount of points given to raiders.
              */
-            if (action.equalsIgnoreCase('setreward')) {
+            if ($.equalsIgnoreCase(action, 'setreward')) {
                 if (isNaN(subAction)) {
                     $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.reward.usage'));
                     return;
@@ -264,9 +274,24 @@
             }
 
             /*
+             * @commandpath raid setincomingminviewers [amount] - Sets the minimum amount of viewers to trigger the raid message.
+             */
+            if ($.equalsIgnoreCase(action, 'setincomingminviewers')) {
+                if (isNaN(subAction) || parseInt(subAction) < 0) {
+                    $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.minviewers.usage'));
+                    return;
+                }
+
+                raidIncMinViewers = parseInt(subAction);
+                $.setIniDbNumber('raidSettings', 'raidMinViewers', raidIncMinViewers);
+                $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.minviewers.set', raidIncMinViewers));
+                return;
+            }
+
+            /*
              * @commandpath raid setincomingmessage [message] - Sets the incoming raid message - Tags: (username), (viewers), (url), (times), (reward) and (game)
              */
-            if (action.equalsIgnoreCase('setincomingmessage')) {
+            if ($.equalsIgnoreCase(action, 'setincomingmessage')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.inc.message.usage'));
                     return;
@@ -281,7 +306,7 @@
             /*
              * @commandpath raid setnewincomingmessage [message] - Sets the incoming raid message for first time raiders - Tags: (username), (viewers), (url), (reward) and (game)
              */
-            if (action.equalsIgnoreCase('setnewincomingmessage')) {
+            if ($.equalsIgnoreCase(action, 'setnewincomingmessage')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.new.inc.message.usage'));
                     return;
@@ -296,7 +321,7 @@
             /*
              * @commandpath raid setoutgoingmessage [message] - Sets the outgoing message for when you raid someone - Tags (username) and (url)
              */
-            if (action.equalsIgnoreCase('setoutgoingmessage')) {
+            if ($.equalsIgnoreCase(action, 'setoutgoingmessage')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.out.message.usage'));
                     return;
@@ -309,9 +334,24 @@
             }
 
             /*
+             * @commandpath raid setoutgoingofflinemessage [message] - Sets a warning message which is added to chat when you use !raid on a channel that is offline.
+             */
+            if ($.equalsIgnoreCase(action, 'setoutgoingofflinemessage')) {
+                if (subAction === undefined) {
+                    $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.out.messageoffline.usage'));
+                    return;
+                }
+
+                raidOutOfflineMessage = args.slice(1).join(' ');
+                $.setIniDbString('raidSettings', 'raidOutOfflineMessage', raidOutOfflineMessage);
+                $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.out.messageoffline.set'));
+                return;
+            }
+
+            /*
              * @commandpath raid setoutgoingmessagespam [amount] - Sets the amount of times that the outgoing raid message is sent in chat. Maximum is 10 times.
              */
-            if (action.equalsIgnoreCase('setoutgoingmessagespam')) {
+            if ($.equalsIgnoreCase(action, 'setoutgoingmessagespam')) {
                 if (isNaN(subAction) || parseInt(subAction) > 10 || parseInt(subAction) < 1) {
                     $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.spam.amount.usage'));
                     return;
@@ -326,15 +366,16 @@
             /*
              * @commandpath raid lookup [username] - Shows the amount of times the username has raided the channel.
              */
-            if (action.equalsIgnoreCase('lookup')) {
+            if ($.equalsIgnoreCase(action, 'lookup')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.lookup.usage'));
                     return;
                 }
 
-                if ($.inidb.exists('incoming_raids', subAction.toLowerCase())) {
-                    var raidObj = JSON.parse($.inidb.get('incoming_raids', subAction.toLowerCase())),
-                            displayName = $.username.resolve(subAction);
+                let incRaids = $.optIniDbString('incoming_raids', subAction.toLowerCase());
+                if (incRaids.isPresent()) {
+                    var raidObj = JSON.parse(incRaids.get()),
+                            displayName = $.viewer.getByLogin(subAction).name();
 
                     $.say($.whisperPrefix(sender) + $.lang.get('raidhandler.lookup.user', displayName, raidObj.totalRaids, new Date(raidObj.lastRaidTime).toLocaleString(), raidObj.lastRaidViewers));
                 } else {
@@ -342,7 +383,7 @@
                 }
                 return;
             }
-
+            action = $.user.sanitize(action);
             // Make sure the user exists on Twitch.
             if ($.username.exists(action)) {
                 handleOutRaid(action);
@@ -356,14 +397,16 @@
      * @event initReady
      */
     $.bind('initReady', function () {
-        $.registerChatCommand('./handlers/raidHandler.js', 'raid', 1);
-        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'toggle', 1);
-        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setreward', 1);
-        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'lookup', 2);
-        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setincomingmessage', 1);
-        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setnewincomingmessage', 1);
-        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setoutgoingmessage', 1);
-        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setoutgoingmessagespam', 1);
+        $.registerChatCommand('./handlers/raidHandler.js', 'raid', $.PERMISSION.Admin);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'toggle', $.PERMISSION.Admin);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setreward', $.PERMISSION.Admin);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setincomingminviewers', $.PERMISSION.Admin);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'lookup', $.PERMISSION.Mod);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setincomingmessage', $.PERMISSION.Admin);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setnewincomingmessage', $.PERMISSION.Admin);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setoutgoingmessage', $.PERMISSION.Admin);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setoutgoingmessagespam', $.PERMISSION.Admin);
+        $.registerChatSubcommand('./handlers/raidHandler.js', 'raid', 'setoutgoingofflinemessage', $.PERMISSION.Admin);
     });
 
     /* Export to API */

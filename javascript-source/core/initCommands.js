@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,118 +15,200 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global Packages */
+
 (function() {
-    var bot = $.botName.toLowerCase();
+    let useBotName = $.getSetIniDbBoolean('settings', 'initCommands.useBotName', true);
+    let sentReady = false;
 
     /*
      * @event command
      */
     $.bind('command', function(event) {
-        var sender = event.getSender(),
+        let sender = event.getSender(),
             command = event.getCommand(),
             argsString = event.getArguments(),
             args = event.getArgs(),
             action = args[0],
             subAction = args[1];
 
-        if (command.equalsIgnoreCase(bot)) {
+        if ($.equalsIgnoreCase(command, 'pbcore')) {
             if (action === undefined) {
-                $.say($.whisperPrefix(sender) + $.lang.get('init.usage', bot));
+                $.say($.whisperPrefix(sender) + $.lang.get('init.usage', command));
                 return;
             }
 
             /*
-             * @commandpath botName disconnect - Removes the bot from your channel.
+             * @commandpath pbcore usebotname - Toggles using the bot name for initCommands commands.
              */
-            if (action.equalsIgnoreCase('disconnect')) {
-                $.say($.whisperPrefix(sender) + $.lang.get('init.disconnect', 'irc-ws.chat.twitch.tv'));
+            if ($.equalsIgnoreCase(action, 'usebotname')) {
+                useBotName = !useBotName;
+                $.setIniDbBoolean('settings', 'initCommands.useBotName', useBotName);
+
+                if (useBotName) {
+                    $.registerChatAlias($.botName.toLowerCase(), 'pbcore', './core/initCommands.js');
+                } else {
+                    $.unregisterChatAlias($.botName.toLowerCase());
+                }
+
+                $.say($.whisperPrefix(sender) + $.lang.get('init.toggle.botname', $.botName.toLowerCase(), (useBotName ? $.lang.get('common.enabled') : $.lang.get('common.disabled'))));
+            }
+
+            /*
+             * @commandpath pbcore disconnect - Removes the bot from your channel.
+             */
+            if ($.equalsIgnoreCase(action, 'disconnect')) {
+                $.say($.whisperPrefix(sender) + $.lang.get('init.disconnect'));
 
                 setTimeout(function() {
-                    java.lang.System.exit(0);
+                    Packages.java.lang.System.exit(0);
                 }, 1000);
             }
 
             /*
-             * @commandpath botName moderate - Forces the bot to detect its moderator status.
+             * @commandpath pbcore reconnect - Reconnects the bot to TMI and EventSub.
              */
-            if (action.equalsIgnoreCase('moderate')) {
-                $.session.getModerationStatus();
+            if ($.equalsIgnoreCase(action, 'reconnect')) {
+                $.say($.whisperPrefix(sender) + $.lang.get('init.reconnect'));
+
+                setTimeout(function() {
+                    Packages.tv.phantombot.PhantomBot.instance().reconnect();
+                }, 1000);
             }
 
             /*
-             * @commandpath botName setconnectmessage [message] - Sets a message that will be said once the bot joins the channel.
+             * @commandpath pbcore moderate - Forces the bot to detect its moderator status.
              */
-            if (action.equalsIgnoreCase('setconnectmessage')) {
+            if ($.equalsIgnoreCase(action, 'moderate')) {
+                Packages.tv.phantombot.PhantomBot.instance().getSession().getModerationStatus();
+            }
+
+            /*
+             * @commandpath pbcore forceonline - Forces the bot to mark the channel as online.
+             */
+            if ($.equalsIgnoreCase(action, 'forceonline')) {
+                $.say($.whisperPrefix(sender) + $.lang.get('init.forceonline'));
+
+                Packages.tv.phantombot.event.EventBus.instance().postAsync(new Packages.tv.phantombot.event.twitch.online.TwitchOnlineEvent());
+            }
+
+            /*
+             * @commandpath pbcore forceoffline - Forces the bot to mark the channel as offline.
+             */
+            if ($.equalsIgnoreCase(action, 'forceoffline')) {
+                $.say($.whisperPrefix(sender) + $.lang.get('init.forceoffline'));
+
+                Packages.tv.phantombot.event.EventBus.instance().postAsync(new Packages.tv.phantombot.event.twitch.offline.TwitchOfflineEvent());
+            }
+
+            /*
+             * @commandpath pbcore setconnectmessage [message] - Sets a message that will be said once the bot joins the channel.
+             */
+            if ($.equalsIgnoreCase(action, 'setconnectmessage')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('init.connected.msg.usage', bot));
                     return;
                 }
 
-                var message = args.slice(1).join(' ');
+                let message = args.slice(1).join(' ');
 
                 $.setIniDbString('settings', 'connectedMsg', message);
                 $.say($.whisperPrefix(sender) + $.lang.get('init.connected.msg', message));
             }
 
             /*
-             * @commandpath botName removeconnectmessage - Removes the message said when the bot joins the channel.
+             * @commandpath pbcore removeconnectmessage - Removes the message said when the bot joins the channel.
              */
-            if (action.equalsIgnoreCase('removeconnectmessage')) {
+            if ($.equalsIgnoreCase(action, 'removeconnectmessage')) {
                 $.inidb.del('settings', 'connectedMsg');
                 $.say($.whisperPrefix(sender) + $.lang.get('init.connected.msg.removed'));
             }
 
             /*
-             * @commandpath botName togglepricecommods - Toggles if moderators and higher pay for commands.
+             * @commandpath pbcore togglepricecommods - Toggles if moderators and higher pay for commands.
              */
-            if (action.equalsIgnoreCase('togglepricecommods')) {
-                var toggle = !$.getIniDbBoolean('settings', 'pricecomMods', false);
+            if ($.equalsIgnoreCase(action, 'togglepricecommods')) {
+                let toggle = !$.getIniDbBoolean('settings', 'pricecomMods', false);
 
                 $.setIniDbBoolean('settings', 'pricecomMods', toggle);
                 $.say($.whisperPrefix(sender) + (toggle ? $.lang.get('init.mod.toggle.on.pay') : $.lang.get('init.mod.toggle.off.pay')));
             }
 
             /*
-             * @commandpath botName togglepermcommessage - Toggles if the no permission message is said in the chat.
+             * @commandpath pbcore togglepermcommessage - Toggles if the no permission message is said in the chat.
              */
-            if (action.equalsIgnoreCase('togglepermcommessage')) {
-                var toggle = !$.getIniDbBoolean('settings', 'permComMsgEnabled', false);
+            if ($.equalsIgnoreCase(action, 'togglepermcommessage')) {
+                let toggle = !$.getIniDbBoolean('settings', 'permComMsgEnabled', false);
 
                 $.setIniDbBoolean('settings', 'permComMsgEnabled', toggle);
                 $.say($.whisperPrefix(sender) + (toggle ? $.lang.get('init.mod.toggle.perm.msg.on') : $.lang.get('init.mod.toggle.perm.msg.off')));
             }
 
             /*
-             * @commandpath botName togglepricecommessage - Toggles if the cost message is said in the chat.
+             * @commandpath pbcore togglepricecommessage - Toggles if the cost message is said in the chat.
              */
-            if (action.equalsIgnoreCase('togglepricecommessage')) {
-                var toggle = !$.getIniDbBoolean('settings', 'priceComMsgEnabled', false);
+            if ($.equalsIgnoreCase(action, 'togglepricecommessage')) {
+                let toggle = !$.getIniDbBoolean('settings', 'priceComMsgEnabled', false);
 
                 $.setIniDbBoolean('settings', 'priceComMsgEnabled', toggle);
                 $.say($.whisperPrefix(sender) + (toggle ? $.lang.get('init.mod.toggle.price.msg.on') : $.lang.get('init.mod.toggle.price.msg.off')));
             }
 
             /*
-             * @commandpath botName togglecooldownmessage - Toggles if the cooldown message is said in the chat.
+             * @commandpath pbcore togglecooldownmessage - Toggles if the cooldown message is said in the chat.
              */
-            if (action.equalsIgnoreCase('togglecooldownmessage')) {
-                var toggle = !$.getIniDbBoolean('settings', 'coolDownMsgEnabled', false);
+            if ($.equalsIgnoreCase(action, 'togglecooldownmessage')) {
+                let toggle = !$.getIniDbBoolean('settings', 'coolDownMsgEnabled', false);
 
                 $.setIniDbBoolean('settings', 'coolDownMsgEnabled', toggle);
                 $.say($.whisperPrefix(sender) + (toggle ? $.lang.get('init.toggle.cooldown.msg.on') : $.lang.get('init.toggle.cooldown.msg.off')));
             }
+
+            /*
+             * @commandpath pbcore togglecustomcommandat - Toggles if custom commands without command tags can be targeted by mods using !mycommand @user
+             */
+            if ($.equalsIgnoreCase(action, 'togglecustomcommandat')) {
+                let toggle = !$.getIniDbBoolean('settings', 'customCommandAtEnabled', true);
+
+                $.setIniDbBoolean('settings', 'customCommandAtEnabled', toggle);
+                $.say($.whisperPrefix(sender) + (toggle ? $.lang.get('init.toggle.customCommandAt.on') : $.lang.get('init.toggle.customCommandAt.off')));
+            }
         }
 
-        if (command.equalsIgnoreCase('module')) {
+        if ($.equalsIgnoreCase(command, 'module')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('init.module.usage'));
                 return;
             }
 
             /*
+             * @commandpath module reload [path/all (option)] - Force reloads all active modules or force reloads a single module.
+             */
+            if ($.equalsIgnoreCase(action, 'reload')) {
+                if (subAction === undefined || $.equalsIgnoreCase(subAction, 'all')) {
+                    $.bot.loadScriptRecursive('', false, true);
+                    $.say($.whisperPrefix(sender) + $.lang.get('init.module.reload.all'));
+                    return;
+                }
+                if ($.getIniDbString('modules', subAction, undefined) !== undefined){
+                    let module = $.bot.getModule(subAction);
+                    if (module !== undefined) {
+                        $.bot.loadScript(module.scriptName, true, false);
+                        $.say($.whisperPrefix(sender) + $.lang.get('init.module.reload', subAction));
+                    } else {
+                        $.say($.whisperPrefix(sender) + $.lang.get('init.module.delete.404'));
+                    }
+                    return;
+                }
+
+                $.say($.whisperPrefix(sender) + $.lang.get('init.module.reload.usage'));
+                return;
+            }
+
+            /*
              * @commandpath module delete [path] - Removes a module from the modules list. This does not remove the module itself.
              */
-            if (action.equalsIgnoreCase('delete')) {
+            if ($.equalsIgnoreCase(action, 'delete')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('init.module.delete.usage'));
                     return;
@@ -142,8 +224,8 @@
             /*
              * @commandpath module list - Gives a list of all the modules with their current status.
              */
-            if (action.equalsIgnoreCase('list')) {
-                var keys = Object.keys($.bot.modules),
+            if ($.equalsIgnoreCase(action, 'list')) {
+                let keys = Object.keys($.bot.modules),
                     modules = $.bot.modules,
                     temp = [],
                     i;
@@ -156,7 +238,7 @@
                     temp.push(modules[keys[i]].scriptName + (modules[keys[i]].isEnabled ? ' (' + $.lang.get('common.enabled') + ')' : ' (' + $.lang.get('common.disabled') + ')'));
                 }
 
-                var totalPages = $.paginateArray(temp, 'init.module.list', ', ', true, sender, (isNaN(parseInt(subAction)) ? 1 : parseInt(subAction)));
+                let totalPages = $.paginateArray(temp, 'init.module.list', ', ', true, sender, (isNaN(parseInt(subAction)) ? 1 : parseInt(subAction)));
 
                 if (totalPages > 0) {
                     $.say($.whisperPrefix(sender) + $.lang.get('init.module.list.total', totalPages));
@@ -166,13 +248,13 @@
             /*
              * @commandpath module status [module path] - Retrieve the current status (enabled/disabled) of the given module
              */
-            if (action.equalsIgnoreCase('status')) {
+            if ($.equalsIgnoreCase(action, 'status')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('init.module.usage.status'));
                     return;
                 }
 
-                var module = $.bot.getModule(subAction);
+                let module = $.bot.getModule(subAction);
 
                 if (module !== undefined) {
                     if (module.isEnabled) {
@@ -188,7 +270,7 @@
             /*
              * @commandpath module enable [module path] - Enable a module using the path and name of the module
              */
-            if (action.equalsIgnoreCase('enable')) {
+            if ($.equalsIgnoreCase(action, 'enable')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('init.module.usage.enable'));
                     return;
@@ -198,14 +280,14 @@
                     return;
                 }
 
-                var module = $.bot.getModule(subAction);
+                let module = $.bot.getModule(subAction);
 
                 if (module !== undefined) {
                     $.setIniDbBoolean('modules', module.scriptName, true);
                     $.bot.loadScript(module.scriptName);
                     $.bot.modules[module.scriptName].isEnabled = true;
 
-                    var hookIndex = $.bot.getHookIndex($.bot.modules[module.scriptName].scriptName, 'initReady');
+                    let hookIndex = $.bot.getHookIndex($.bot.modules[module.scriptName].scriptName, 'initReady');
 
                     try {
                         if (hookIndex !== -1) {
@@ -226,7 +308,7 @@
             /*
              * @commandpath module disable [module path] - Disable a module using the path and name of the module
              */
-            if (action.equalsIgnoreCase('disable')) {
+            if ($.equalsIgnoreCase(action, 'disable')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('init.module.usage.disable'));
                     return;
@@ -236,7 +318,7 @@
                     return;
                 }
 
-                var module = $.bot.getModule(subAction);
+                let module = $.bot.getModule(subAction);
 
                 if (module !== undefined) {
                     $.setIniDbBoolean('modules', module.scriptName, false);
@@ -244,8 +326,8 @@
 
                     $.say($.whisperPrefix(sender) + $.lang.get('init.module.disabled', module.getModuleName()));
 
-                    if (module.scriptName.equalsIgnoreCase('./systems/pointSystem.js')) {
-                        var modules = ['./games/adventureSystem.js', './games/roll.js', './games/slotMachine.js', './systems/ticketraffleSystem.js', './systems/raffleSystem.js', './games/gambling.js'],
+                    if ($.equalsIgnoreCase(module.scriptName, './systems/pointSystem.js')) {
+                        let modules = ['./games/adventureSystem.js', './games/roll.js', './games/slotMachine.js', './systems/ticketraffleSystem.js', './systems/raffleSystem.js', './games/gambling.js'],
                             i;
 
                         for (i in modules) {
@@ -264,7 +346,7 @@
             /*
              * Panel command.
              */
-            if (action.equalsIgnoreCase('enablesilent')) {
+            if ($.equalsIgnoreCase(action, 'enablesilent')) {
                 if (subAction === undefined) {
                     return;
                 }
@@ -273,14 +355,14 @@
                     return;
                 }
 
-                var module = $.bot.getModule(subAction);
+                let module = $.bot.getModule(subAction);
 
                 if (module !== undefined) {
                     $.setIniDbBoolean('modules', module.scriptName, true);
                     $.bot.loadScript(module.scriptName);
                     $.bot.modules[module.scriptName].isEnabled = true;
 
-                    var hookIndex = $.bot.getHookIndex(module.scriptName, 'initReady');
+                    let hookIndex = $.bot.getHookIndex(module.scriptName, 'initReady');
 
                     try {
                         if (hookIndex !== -1) {
@@ -297,7 +379,7 @@
             /*
              * Panel command.
              */
-            if (action.equalsIgnoreCase('disablesilent')) {
+            if ($.equalsIgnoreCase(action, 'disablesilent')) {
                 if (subAction === undefined) {
                     return;
                 }
@@ -306,14 +388,14 @@
                     return;
                 }
 
-                var module = $.bot.getModule(subAction);
+                let module = $.bot.getModule(subAction);
 
                 if (module !== undefined) {
                     $.setIniDbBoolean('modules', module.scriptName, false);
                     $.bot.modules[module.scriptName].isEnabled = false;
 
-                    if (module.scriptName.equalsIgnoreCase('./systems/pointSystem.js')) {
-                        var modules = ['./games/adventureSystem.js', './games/roll.js', './games/slotMachine.js', './systems/ticketraffleSystem.js', './systems/raffleSystem.js', './games/gambling.js'],
+                    if ($.equalsIgnoreCase(module.scriptName, './systems/pointSystem.js')) {
+                        let modules = ['./games/adventureSystem.js', './games/roll.js', './games/slotMachine.js', './systems/ticketraffleSystem.js', './systems/raffleSystem.js', './games/gambling.js'],
                             i;
 
                         for (i in modules) {
@@ -330,26 +412,26 @@
         /*
          * Panel command.
          */
-        if (command.equalsIgnoreCase('reconnect')) {
+        if ($.equalsIgnoreCase(command, 'reconnect')) {
             if ($.isBot(sender)) {
-                $.session.reconnect();
+                Packages.tv.phantombot.PhantomBot.instance().reconnect();
             }
         }
 
         /*
          * Panel command.
          */
-        if (command.equalsIgnoreCase('disconnect')) {
+        if ($.equalsIgnoreCase(command, 'disconnect')) {
             if ($.isBot(sender)) {
-                java.lang.System.exit(0);
+                Packages.java.lang.System.exit(0);
             }
         }
 
         /*
          * @commandpath echo [message] - Send a message as the bot.
          */
-        if (command.equalsIgnoreCase('chat') || command.equalsIgnoreCase('echo')) {
-            if (argsString.length() > 0) {
+        if ($.equalsIgnoreCase(command, 'chat') || $.equalsIgnoreCase(command, 'echo')) {
+            if ($.strlen(argsString) > 0) {
                 $.say(argsString);
             }
         }
@@ -359,19 +441,36 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./core/initCommands.js', 'chat', 1);
-        $.registerChatCommand('./core/initCommands.js', 'module', 1);
-        $.registerChatCommand('./core/initCommands.js', 'echo', 1);
-        $.registerChatCommand('./core/initCommands.js', 'reconnect', 1);
-        $.registerChatCommand('./core/initCommands.js', 'disconnect', 1);
-        $.registerChatCommand('./core/initCommands.js', bot, 2);
-        $.registerChatSubcommand(bot, 'disconnect', 1);
-        $.registerChatSubcommand(bot, 'reconnect', 1);
-        $.registerChatSubcommand(bot, 'moderate', 2);
+        $.registerChatCommand('./core/initCommands.js', 'chat', $.PERMISSION.Admin);
+        $.registerChatCommand('./core/initCommands.js', 'module', $.PERMISSION.Admin);
+        $.registerChatCommand('./core/initCommands.js', 'echo', $.PERMISSION.Admin);
+        $.registerChatCommand('./core/initCommands.js', 'reconnect', $.PERMISSION.Admin);
+        $.registerChatCommand('./core/initCommands.js', 'disconnect', $.PERMISSION.Admin);
+        $.registerChatCommand('./core/initCommands.js', 'pbcore', $.PERMISSION.Mod);
+        $.registerChatSubcommand('pbcore', 'disconnect', $.PERMISSION.Admin);
+        $.registerChatSubcommand('pbcore', 'reconnect', $.PERMISSION.Admin);
+        $.registerChatSubcommand('pbcore', 'moderate', $.PERMISSION.Mod);
+        $.registerChatSubcommand('pbcore', 'forceonline', $.PERMISSION.Mod);
+        $.registerChatSubcommand('pbcore', 'forceoffline', $.PERMISSION.Mod);
+        $.registerChatSubcommand('pbcore', 'setconnectmessage', $.PERMISSION.Admin);
+        $.registerChatSubcommand('pbcore', 'removeconnectmessage', $.PERMISSION.Admin);
+        $.registerChatSubcommand('pbcore', 'togglepricecommods', $.PERMISSION.Admin);
+        $.registerChatSubcommand('pbcore', 'togglepermcommessage', $.PERMISSION.Admin);
+        $.registerChatSubcommand('pbcore', 'togglepricecommessage', $.PERMISSION.Admin);
+        $.registerChatSubcommand('pbcore', 'togglecooldownmessage', $.PERMISSION.Admin);
+        $.registerChatSubcommand('pbcore', 'togglecustomcommandat', $.PERMISSION.Admin);
+
+        if (useBotName) {
+            $.registerChatAlias($.botName.toLowerCase(), 'pbcore', './core/initCommands.js');
+        }
 
         // Say the connected message.
-        if ($.inidb.exists('settings', 'connectedMsg')) {
-            $.say($.inidb.get('settings', 'connectedMsg'));
+        if (!sentReady) {
+            let connectedMsg = $.optIniDbString('settings', 'connectedMsg');
+            if (connectedMsg.isPresent()) {
+                $.say(connectedMsg.get());
+                sentReady = true;
+            }
         }
     });
 })();

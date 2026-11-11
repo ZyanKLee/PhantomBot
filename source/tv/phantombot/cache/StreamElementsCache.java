@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,65 +16,46 @@
  */
 package tv.phantombot.cache;
 
-import com.scaniatv.StreamElementsAPIv2;
-import java.util.Calendar;
-import java.util.Date;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import com.gmt2001.util.concurrent.ExecutorService;
+import com.scaniatv.StreamElementsAPIv2;
+
 import tv.phantombot.PhantomBot;
 import tv.phantombot.event.EventBus;
 import tv.phantombot.event.streamelements.donate.StreamElementsDonationEvent;
 import tv.phantombot.event.streamelements.donate.StreamElementsDonationInitializedEvent;
 
-public class StreamElementsCache implements Runnable {
+public class StreamElementsCache {
 
-    private static final Map<String, StreamElementsCache> instances = new ConcurrentHashMap<>();
-    private final Thread updateThread;
-    private final String channel;
+    private static StreamElementsCache instance;
     private Map<String, JSONObject> cache = new ConcurrentHashMap<>();
-    private Date timeoutExpire = new Date();
-    private Date lastFail = new Date();
-    private Boolean firstUpdate = true;
-    private Boolean killed = false;
-    private int numfail = 0;
+    private ScheduledFuture<?> updateFuture = null;
+    private boolean firstUpdate = true;
 
-    /**
-     * Used to call and start this instance.
-     *
-     * @param {String}  channel  Channel to run the cache for.
-     */
-    public static StreamElementsCache instance(String channel) {
-        StreamElementsCache instance = instances.get(channel);
-
+    public static StreamElementsCache instance() {
         if (instance == null) {
-            instance = new StreamElementsCache(channel);
-            instances.put(channel, instance);
+            instance = new StreamElementsCache();
         }
+
         return instance;
     }
 
-    /**
-     * Starts this class on a new thread.
-     *
-     * @param {String}  channel  Channel to run the cache for.
-     */
-    private StreamElementsCache(String channel) {
-        this.channel = channel;
-        this.updateThread = new Thread(this, "tv.phantombot.cache.StreamElementsCache");
-
-        Thread.setDefaultUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
-        this.updateThread.setUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
-
-        this.updateThread.start();
+    private StreamElementsCache() {
+        this.updateFuture = ExecutorService.scheduleAtFixedRate(this::run, 20, 30, TimeUnit.SECONDS);
     }
 
     /**
      * Checks if the donation has been cached.
      *
-     * @return {Boolean}
+     * @param donationID
+     * @return
      */
     public boolean exists(String donationID) {
         return cache.containsKey(donationID);
@@ -83,59 +64,21 @@ public class StreamElementsCache implements Runnable {
     /**
      * Returns the current cache count (size/length),
      *
-     * @return {Integer}
+     * @return
      */
     public int count() {
         return cache.size();
     }
 
-    /**
-     * Checks the amount of time we failed when calling the api to avoid abusing it.
-     */
-    private void checkLastFail() {
-        Calendar cal = Calendar.getInstance();
-        numfail = (lastFail.after(new Date()) ? numfail + 1 : 1);
-
-        cal.add(Calendar.MINUTE, 1);
-        lastFail = cal.getTime();
-
-        if (numfail > 5) {
-            timeoutExpire = cal.getTime();
-        }
-    }
-
-    /**
-     * Starts the cache loop.
-     */
-    @Override
-    @SuppressWarnings("SleepWhileInLoop")
-    public void run() {
+    private void run() {
         try {
-            Thread.sleep(20 * 1000);
-        } catch (InterruptedException ex) {
-            com.gmt2001.Console.debug.println("StreamElementsCache.run: Failed to execute initial sleep [InterruptedException]: " + ex.getMessage());
+            if (StreamElementsAPIv2.hasJWT()) {
+                this.updateCache();
+            }
+        } catch (Exception ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
         }
 
-        while (!killed) {
-            try {
-                try {
-                    if (new Date().after(timeoutExpire)) {
-                        this.updateCache();
-                    }
-                } catch (Exception ex) {
-                    checkLastFail();
-                    com.gmt2001.Console.debug.println("StreamElementsCache.run: Failed to update donations: " + ex.getMessage());
-                }
-            } catch (Exception ex) {
-                com.gmt2001.Console.err.println("StreamElementsCache.run: Failed to update donations: " + ex.getMessage());
-            }
-
-            try {
-                Thread.sleep(30 * 1000);
-            } catch (InterruptedException ex) {
-                com.gmt2001.Console.debug.println("StreamElementsCache.run: Failed to sleep [InterruptedException]: " + ex.getMessage());
-            }
-        }
     }
 
     /**
@@ -162,25 +105,20 @@ public class StreamElementsCache implements Runnable {
                 }
             } else {
                 if (jsonResult.has("error") && jsonResult.getString("error").equalsIgnoreCase("Unauthorized")) {
-                    com.gmt2001.Console.err.println("StreamElementsCache.updateCache: Bad JWT token disabling the StreamElements module.");
-                    PhantomBot.instance().getDataStore().SetString("modules", "", "./handlers/streamElementsHandler.js", "false");
-                    killed = true;
-                } else {
-                    throw new Exception("Failed to get donations: " + jsonResult);
+                    com.gmt2001.Console.err.println("StreamElementsCache.updateCache: Bad JWT token.");
                 }
             }
-        } else {
-            throw new Exception("[" + jsonResult.getString("_exception") + "] " + jsonResult.getString("_exceptionMessage"));
         }
 
-        if (firstUpdate && !killed) {
+        if (firstUpdate) {
             firstUpdate = false;
-            EventBus.instance().post(new StreamElementsDonationInitializedEvent());
+            EventBus.instance().postAsync(new StreamElementsDonationInitializedEvent());
         }
 
-        if (donations != null && !killed) {
+        if (donations != null) {
             for (int i = 0; i < donations.length(); i++) {
-                if (cache == null || !cache.containsKey(donations.getJSONObject(i).getString("_id"))) {
+                if ((cache == null || !cache.containsKey(donations.getJSONObject(i).getString("_id")))
+                        && !PhantomBot.instance().getDataStore().exists("donations", donations.getJSONObject(i).getString("_id"))) {
                     EventBus.instance().postAsync(new StreamElementsDonationEvent(donations.getJSONObject(i).toString()));
                 }
             }
@@ -192,7 +130,7 @@ public class StreamElementsCache implements Runnable {
     /**
      * Sets the current cache.
      *
-     * @param {Map}  Cache
+     * @param cache
      */
     public void setCache(Map<String, JSONObject> cache) {
         this.cache = cache;
@@ -201,7 +139,7 @@ public class StreamElementsCache implements Runnable {
     /**
      * Returns the current cache.
      *
-     * @return {Map} Current cache.
+     * @return Current cache.
      */
     public Map<String, JSONObject> getCache() {
         return cache;
@@ -211,15 +149,8 @@ public class StreamElementsCache implements Runnable {
      * Kills the current cache.
      */
     public void kill() {
-        killed = true;
-    }
-
-    /**
-     * Kills all the caches.
-     */
-    public static void killall() {
-        for (Entry<String, StreamElementsCache> instance : instances.entrySet()) {
-            instance.getValue().kill();
+        if (this.updateFuture != null) {
+            this.updateFuture.cancel(true);
         }
     }
 }

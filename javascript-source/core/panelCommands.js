@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,27 +19,20 @@
  * This script is used to reload variables from scripts when you edit stuff on the panel. Only the bot can use these, and you can't disable them
  */
 
-(function() {
-    $.bind('command', function(event) {
+(function () {
+    $.bind('command', function (event) {
         var sender = event.getSender(),
-            command = event.getCommand(),
-            args = event.getArgs(),
-            action = args[0];
-
+                command = event.getCommand(),
+                args = event.getArgs(),
+                action = args[0];
 
         /* reloads the betting vars */
-        if (command.equalsIgnoreCase('reloadbet')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadbet')) {
             $.reloadBet();
         }
 
         /** Adds or removes a user from the moderator cache */
-        if (command.equalsIgnoreCase('permissionsetuser')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'permissionsetuser')) {
             if (parseInt(args[1]) <= 2) {
                 $.addModeratorToCache(action.toLowerCase());
             } else {
@@ -47,11 +40,7 @@
             }
         }
 
-        if (command.equalsIgnoreCase('reloadmisc')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
-
+        if ($.equalsIgnoreCase(command, 'reloadmisc')) {
             $.reloadMisc();
             $.reloadWhispers();
         }
@@ -59,69 +48,79 @@
         /*
          * Reloads the tipeeestream vars.
          */
-        if (command.equalsIgnoreCase('tipeeestreamreload')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'tipeeestreamreload')) {
             $.reloadTipeeeStream();
         }
 
         /*
          * Reloads the streamelements vars.
          */
-        if (command.equalsIgnoreCase('streamelementsreload')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'streamelementsreload')) {
             $.reloadStreamElements();
         }
 
         /*
          * Sets permissions on a command.
          */
-        if (command.equalsIgnoreCase('permcomsilent')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'permcomsilent')) {
+            action = action.replace('!', '').toLowerCase();
+            let group = $.PERMISSION.Viewer;
 
-            if (args.length == 2) {
-                var group = args[1];
+            if (args.length === 2) {
+                group = args[1];
+
+                if (!$.commandExists(action)) {
+                    return;
+                }
 
                 if (isNaN(parseInt(group))) {
                     group = $.getGroupIdByName(group);
                 }
 
-                var list = $.inidb.GetKeyList('aliases', ''),
-                    i;
-                for (i in list) {
-                    if (list[i].equalsIgnoreCase(action)) {
-                        $.inidb.set('permcom', $.inidb.get('aliases', list[i]), group);
-                        $.updateCommandGroup($.inidb.get('aliases', list[i]), group);
+                $.logCustomCommand({
+                    'set.perm.command': '!' + action,
+                    'set.perm.group': $.getGroupNameById(group),
+                    'sender': sender
+                });
+
+                let list = $.inidb.GetKeyList('aliases', '');
+
+                for (let i in list) {
+                    if ($.equalsIgnoreCase(list[i], action)) {
+                        $.inidb.set('permcom', $.getIniDbString('aliases', list[i]), group);
+                        $.updateCommandGroup($.getIniDbString('aliases', list[i]), group);
                     }
                 }
+
                 $.inidb.set('permcom', action, group);
                 $.updateCommandGroup(action, group);
-                return;
-            }
-
-            var subcommand = args[1],
+            } else {
+                let subAction = args[1];
                 group = args[2];
-            if (isNaN(parseInt(group))) {
-                group = $.getGroupIdByName(group);
-            }
 
-            $.inidb.set('permcom', action + ' ' + subcommand, group);
-            $.updateSubcommandGroup(action, subcommand, group);
+                if (!$.subCommandExists(action, subAction)) {
+                    return;
+                }
+
+                if (isNaN(parseInt(group))) {
+                    group = $.getGroupIdByName(group);
+                }
+
+                $.logCustomCommand({
+                    'set.perm.command': '!' + action + ' ' + subAction,
+                    'set.perm.group': $.getGroupNameById(group),
+                    'sender': sender
+                });
+                $.inidb.set('permcom', action + ' ' + subAction, group);
+                $.updateSubcommandGroup(action, subAction, group);
+            }
             return;
         }
 
         /*
          * Reloads the command variables.
          */
-        if (command.equalsIgnoreCase('reloadcommand')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadcommand')) {
             $.addComRegisterAliases();
             $.addComRegisterCommands();
             if (action) {
@@ -133,11 +132,8 @@
         /*
          * Registers a command
          */
-        if (command.equalsIgnoreCase('registerpanel')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
-            $.registerChatCommand(($.inidb.exists('tempDisabledCommandScript', args[0].toLowerCase()) ? $.inidb.get('tempDisabledCommandScript', args[0].toLowerCase()) : './commands/customCommands.js'), args[0].toLowerCase());
+        if ($.equalsIgnoreCase(command, 'registerpanel')) {
+            $.registerChatCommand($.getIniDbString('tempDisabledCommandScript', args[0].toLowerCase(), './commands/customCommands.js'), args[0].toLowerCase());
             $.inidb.del('tempDisabledCommandScript', args[0].toLowerCase());
             return;
         }
@@ -145,10 +141,7 @@
         /*
          * unregtisters a command
          */
-        if (command.equalsIgnoreCase('unregisterpanel')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'unregisterpanel')) {
             $.tempUnRegisterChatCommand(args[0].toLowerCase());
             return;
         }
@@ -156,42 +149,27 @@
         /*
          * Reloads the moderation variables.
          */
-        if (command.equalsIgnoreCase('reloadmod')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadmod')) {
             $.reloadModeration();
         }
 
-        if (command.equalsIgnoreCase('reloadkill')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadkill')) {
             $.reloadKill();
         }
 
-        if (command.equalsIgnoreCase('reloadraid')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadraid')) {
             $.reloadRaid();
         }
 
         /* reloads the clip vars */
-        if (command.equalsIgnoreCase('reloadclip')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadclip')) {
             $.reloadClips();
         }
 
         /*
          * Clears the highlight
          */
-        if (command.equalsIgnoreCase("clearhighlightspanel")) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, "clearhighlightspanel")) {
             $.inidb.RemoveFile("highlights");
             return;
         }
@@ -199,32 +177,29 @@
         /*
          * makes a highlight
          */
-        if (command.equalsIgnoreCase('highlightpanel')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'highlightpanel')) {
             if (!$.isOnline($.channelName)) {
                 return;
             }
-            var streamUptimeMinutes = parseInt($.getStreamUptimeSeconds($.channelName) / 60);
-            var hours = parseInt(streamUptimeMinutes / 60);
-            var minutes = parseInt(streamUptimeMinutes % 60);
+
+            let streamUptimeMinutes = parseInt($.getStreamUptimeSeconds($.channelName) / 60);
+            let hours = parseInt(streamUptimeMinutes / 60);
+            let minutes = parseInt(streamUptimeMinutes % 60);
+
             if (minutes < 10) {
                 minutes = "0" + minutes;
             }
-            timestamp = hours + ":" + minutes;
-            localDate = $.getCurLocalTimeString("'['dd-MM-yyyy']'");
+
+            let timestamp = hours + ":" + minutes;
+            let localDate = $.getCurLocalTimeString("'['dd-MM-yyyy']'");
             $.inidb.set('highlights', timestamp, localDate + ' ' + args.splice(0).join(' '));
         }
 
         /*
          * Sets the title on stream
          */
-        if (command.equalsIgnoreCase('settitlesilent')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
-            var argsString = args.splice(0).join(' ');
+        if ($.equalsIgnoreCase(command, 'settitlesilent')) {
+            let argsString = args.splice(0).join(' ');
             $.updateStatus($.channelName, argsString, sender, true);
             return;
         }
@@ -232,11 +207,8 @@
         /*
          * Sets the game on stream
          */
-        if (command.equalsIgnoreCase('setgamesilent')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
-            var argsString = args.splice(0).join(' ');
+        if ($.equalsIgnoreCase(command, 'setgamesilent')) {
+            let argsString = args.splice(0).join(' ');
             $.updateGame($.channelName, argsString, sender, true);
             return;
         }
@@ -244,10 +216,7 @@
         /*
          * Reloads the adventure variables.
          */
-        if (command.equalsIgnoreCase('reloadadventure')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadadventure')) {
             $.reloadAdventure();
             return;
         }
@@ -255,10 +224,7 @@
         /*
          * Reloads the gambling variables.
          */
-        if (command.equalsIgnoreCase('reloadgamble')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadgamble')) {
             $.reloadGamble();
             return;
         }
@@ -266,10 +232,7 @@
         /*
          * Reloads the roll variables.
          */
-        if (command.equalsIgnoreCase('loadprizesroll')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'loadprizesroll')) {
             $.loadPrizes();
             return;
         }
@@ -277,10 +240,7 @@
         /*
          * Reloads the roulette variables.
          */
-        if (command.equalsIgnoreCase('reloadroulette')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadroulette')) {
             $.reloadRoulette();
             return;
         }
@@ -288,10 +248,7 @@
         /*
          * Reloads the slot variables.
          */
-        if (command.equalsIgnoreCase('loadprizes')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'loadprizes')) {
             $.loadPrizesSlot();
             return;
         }
@@ -299,10 +256,7 @@
         /*
          * Reloads the bits variables.
          */
-        if (command.equalsIgnoreCase('reloadbits')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadbits')) {
             $.reloadBits();
             return;
         }
@@ -310,10 +264,7 @@
         /*
          * Reloads the donation variables.
          */
-        if (command.equalsIgnoreCase('donationpanelupdate')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'donationpanelupdate')) {
             $.donationpanelupdate();
             return;
         }
@@ -321,32 +272,15 @@
         /*
          * Reloads the follow variables.
          */
-        if (command.equalsIgnoreCase('followerpanelupdate')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'followerpanelupdate')) {
             $.updateFollowConfig();
-            return;
-        }
-
-        /*
-         * Reloads the host variables.
-         */
-        if (command.equalsIgnoreCase('reloadhost')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
-            $.updateHost();
             return;
         }
 
         /*
          * Reloads the subscriber variables.
          */
-        if (command.equalsIgnoreCase('subscriberpanelupdate')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'subscriberpanelupdate')) {
             $.updateSubscribeConfig();
             return;
         }
@@ -354,10 +288,7 @@
         /*
          * Reloads the greeting variables.
          */
-        if (command.equalsIgnoreCase('greetingspanelupdate')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'greetingspanelupdate')) {
             $.greetingspanelupdate();
             return;
         }
@@ -365,10 +296,7 @@
         /*
          * Reloads the welcome variables.
          */
-        if (command.equalsIgnoreCase('welcomepanelupdate')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'welcomepanelupdate')) {
             $.welcomepanelupdate();
             return;
         }
@@ -376,20 +304,14 @@
         /*
          * Reloads the notice variables.
          */
-        if (command.equalsIgnoreCase('reloadnotice')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadnotice')) {
             $.reloadNoticeTimers();
         }
 
         /*
          * Reloads the points variables.
          */
-        if (command.equalsIgnoreCase('reloadpoints')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadpoints')) {
             $.updateSettings();
             return;
         }
@@ -397,10 +319,7 @@
         /*
          * Sets a points bonus
          */
-        if (command.equalsIgnoreCase('pointsbonuspanel')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'pointsbonuspanel')) {
             $.setTempBonus(action, args[1]);
             return;
         }
@@ -408,38 +327,31 @@
         /*
          * Gives points to everyone in the channel
          */
-        if (command.equalsIgnoreCase('pointsallpanel')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
-            for (var i in $.users) {
+        if ($.equalsIgnoreCase(command, 'pointsallpanel')) {
+            for (let i in $.users) {
                 $.inidb.incr('points', $.users[i].toLowerCase(), parseInt(action));
             }
+
             return;
         }
 
         /*
          * Takes points from everyone in the channel
          */
-        if (command.equalsIgnoreCase('pointstakeallpanel')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
-            for (var i in $.users) {
+        if ($.equalsIgnoreCase(command, 'pointstakeallpanel')) {
+            for (let i in $.users) {
                 if ($.getUserPoints($.users[i].toLowerCase()) > parseInt(action)) {
                     $.inidb.decr('points', $.users[i].toLowerCase(), parseInt(action));
                 }
             }
+
             return;
         }
 
         /*
          * Reloads the raffle variables.
          */
-        if (command.equalsIgnoreCase('reloadraffle')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadraffle')) {
             $.reloadRaffle();
             return;
         }
@@ -447,10 +359,7 @@
         /*
          * Reloads the rank variables.
          */
-        if (command.equalsIgnoreCase('rankreloadtable')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'rankreloadtable')) {
             $.loadRanksTimeTable();
             return;
         }
@@ -458,10 +367,7 @@
         /*
          * Reloads the ticket raffle variables.
          */
-        if (command.equalsIgnoreCase('reloadtraffle')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadtraffle')) {
             $.reloadTRaffle();
             return;
         }
@@ -469,10 +375,7 @@
         /*
          * Reloads the time variables.
          */
-        if (command.equalsIgnoreCase('updatetimesettings')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'updatetimesettings')) {
             $.updateTimeSettings();
             return;
         }
@@ -480,58 +383,54 @@
         /*
          * Reloads the log variables.
          */
-        if (command.equalsIgnoreCase('reloadlogs')) {
-            if (!$.isBot(sender)) {
-                return;
-            }
+        if ($.equalsIgnoreCase(command, 'reloadlogs')) {
             $.reloadLogs();
             return;
         }
     });
 
-    $.bind('initReady', function() {
+    $.bind('initReady', function () {
         /* 10 second delay here because I don't want these commands to be registered first. */
-        setTimeout(function() {
-            $.registerChatCommand('./core/panelCommands.js', 'permissionsetuser', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadcommand', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'permcomsilent', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'registerpanel', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'unregisterpanel', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadmod', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'clearhighlightspanel', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'highlightpanel', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'settitlesilent', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'setgamesilent', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadadventure', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadgamble', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'loadprizesroll', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadroulette', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'loadprizes', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadbits', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'donationpanelupdate', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'followerpanelupdate', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadhost', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'subscriberpanelupdate', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'greetingspanelupdate', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadnotice', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadpoints', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'pointsallpanel', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'pointsbonuspanel', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'pointstakeallpanel', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadraffle', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'rankreloadtable', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadtraffle', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'updatetimesettings', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadlogs', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadbet', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'tipeeestreamreload', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'streamelementsreload', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'setcommunitysilent', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadclip', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadkill', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadraid', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'reloadmisc', 30);
-            $.registerChatCommand('./core/panelCommands.js', 'welcomepanelupdate', 30);
+        setTimeout(function () {
+            $.registerChatCommand('./core/panelCommands.js', 'permissionsetuser', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadcommand', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'permcomsilent', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'registerpanel', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'unregisterpanel', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadmod', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'clearhighlightspanel', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'highlightpanel', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'settitlesilent', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'setgamesilent', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadadventure', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadgamble', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'loadprizesroll', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadroulette', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'loadprizes', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadbits', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'donationpanelupdate', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'followerpanelupdate', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'subscriberpanelupdate', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'greetingspanelupdate', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadnotice', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadpoints', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'pointsallpanel', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'pointsbonuspanel', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'pointstakeallpanel', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadraffle', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'rankreloadtable', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadtraffle', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'updatetimesettings', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadlogs', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadbet', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'tipeeestreamreload', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'streamelementsreload', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'setcommunitysilent', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadclip', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadkill', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadraid', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'reloadmisc', $.PERMISSION.Panel);
+            $.registerChatCommand('./core/panelCommands.js', 'welcomepanelupdate', $.PERMISSION.Panel);
         }, 10000);
     });
 })();

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,34 +24,37 @@
     var amountPoints = $.getSetIniDbNumber('settings', 'topListAmountPoints', 5),
         amountTime = $.getSetIniDbNumber('settings', 'topListAmountTime', 5);
 
-    /*
+    /**
      * @function reloadTop
+     * @export $
      */
     function reloadTop() {
         amountPoints = $.getIniDbNumber('settings', 'topListAmountPoints');
         amountTime = $.getIniDbNumber('settings', 'topListAmountTime');
     }
 
-    /*
+    /**
      * @function getTop5
      *
      * @param {string} iniName
      * @returns {Array}
+     * @export $
      */
     function getTop5(iniName) {
-        var keys = $.inidb.GetKeysByNumberOrderValue(iniName, '', 'DESC', (iniName.equals('points') ? amountPoints + 2: amountTime + 2), 0),
-            list = [],
-            i,
-            ctr = 0;
+        let list = [],
+            ctr = 0,
+            amount = (iniName === 'points' ? amountPoints : amountTime),
+            keys = $.inidb.GetKeysByNumberOrderValue(iniName, '', 'DESC', amount + 2, 0);
 
-        for (i in keys) {
+        for (let i in keys) {
             if (!$.isBot(keys[i]) && !$.isOwner(keys[i])) {
-                if (ctr++ == (iniName.equals('points') ? amountPoints : amountTime)) {
+                if (ctr++ === amount) {
                     break;
                 }
+
                 list.push({
                     username: keys[i],
-                    value: $.inidb.get(iniName, keys[i])
+                    value: $.getIniDbString(iniName, keys[i])
                 });
             }
         }
@@ -60,18 +63,23 @@
             return (b.value - a.value);
         });
 
-        if (iniName.equals('points')) {
-            return list.slice(0, amountPoints);
-        } else {
-            return list.slice(0, amountTime);
+        list = list.slice(0, amount);
+
+        let top = [],
+                type = (iniName === 'points' ? $.pointNameMultiple : 'time');
+        for (let i = 0; i < list.length; i++) {
+            let string = (iniName === 'points' ? $.getPointsString(list[i].value) : $.getTimeString(list[i].value, true));
+            top.push((parseInt(i) + 1) + '. ' + $.resolveRank(list[i].username) + ' ' + string);
         }
+
+        return $.lang.get('top5.default', amount, type, top.join(', '));
     }
 
-    /*
+    /**
      * @event command
      */
     $.bind('command', function(event) {
-        var command = event.getCommand(),
+        let command = event.getCommand(),
             args = event.getArgs(),
             sender = event.getSender(),
             action = args[0];
@@ -79,85 +87,75 @@
         /**
          * @commandpath top - Display the top people with the most points
          */
-        if (command.equalsIgnoreCase('top')) {
+        if ($.equalsIgnoreCase(command, 'top')) {
             if (!$.bot.isModuleEnabled('./systems/pointSystem.js')) {
                 return;
             }
 
-            var temp = getTop5('points'),
-                top = [],
-                i;
-
-            for (i in temp) {
-                top.push((parseInt(i) + 1) + '. ' + $.resolveRank(temp[i].username) + ' ' + $.getPointsString(temp[i].value));
-            }
-
-            $.say($.lang.get('top5.default', amountPoints, $.pointNameMultiple, top.join(', ')));
+            $.say(getTop5('points'));
             return;
         }
 
-        /*
+        /**
          * @commandpath toptime - Display the top people with the most time
          */
-        if (command.equalsIgnoreCase('toptime')) {
-            var temp = getTop5('time'),
-                top = [],
-                i;
-
-            for (i in temp) {
-                top.push((parseInt(i) + 1) + '. ' + $.resolveRank(temp[i].username) + ' ' + $.getTimeString(temp[i].value, true));
-            }
-
-            $.say($.lang.get('top5.default', amountTime, 'time', top.join(', ')));
+        if ($.equalsIgnoreCase(command, 'toptime')) {
+            $.say(getTop5('time'));
             return;
         }
 
-        /*
+        /**
          * @commandpath topamount - Set how many people who will show up in the !top points list
          */
-        if (command.equalsIgnoreCase('topamount')) {
-            if (action === undefined) {
+        if ($.equalsIgnoreCase(command, 'topamount')) {
+            if (action === undefined || isNaN(parseInt(action))) {
                 $.say($.whisperPrefix(sender) + $.lang.get('top5.amount.points.usage'));
                 return;
-            } else if (action > 15) {
+            }
+            if (parseInt(action) > 15) {
                 $.say($.whisperPrefix(sender) + $.lang.get('top5.amount.max'));
                 return;
             }
 
-            amountPoints = action;
+            amountPoints = parseInt(action);
             $.inidb.set('settings', 'topListAmountPoints', amountPoints);
             $.say($.whisperPrefix(sender) + $.lang.get('top5.amount.points.set', amountPoints));
+            return;
         }
 
-        /*
+        /**
          * @commandpath toptimeamount - Set how many people who will show up in the !toptime list
          */
-        if (command.equalsIgnoreCase('toptimeamount')) {
-            if (action === undefined) {
+        if ($.equalsIgnoreCase(command, 'toptimeamount')) {
+            if (action === undefined || isNaN(parseInt(action))) {
                 $.say($.whisperPrefix(sender) + $.lang.get('top5.amount.time.usage'));
                 return;
-            } else if (action > 15) {
+            }
+            if (parseInt(action) > 15) {
                 $.say($.whisperPrefix(sender) + $.lang.get('top5.amount.max'));
                 return;
             }
 
-            amountTime = action;
+            amountTime = parseInt(action);
             $.inidb.set('settings', 'topListAmountTime', amountTime);
             $.say($.whisperPrefix(sender) + $.lang.get('top5.amount.time.set', amountTime));
+            return;
         }
 
-        /*
+        /**
          * @commandpath reloadtopbots - DEPRECATED. Use !reloadbots
          */
-        if (command.equalsIgnoreCase('reloadtopbots')) {
+        if ($.equalsIgnoreCase(command, 'reloadtopbots')) {
             $.say($.whisperPrefix(sender) + $.lang.get('top5.reloadtopbots'));
+            return;
         }
 
-        /*
+        /**
          * Panel command, no command path needed.
          */
-        if (command.equalsIgnoreCase('reloadtop')) {
+        if ($.equalsIgnoreCase(command, 'reloadtop')) {
             reloadTop();
+            return;
         }
     });
 
@@ -165,11 +163,14 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./commands/topCommand.js', 'top', 7);
-        $.registerChatCommand('./commands/topCommand.js', 'toptime', 7);
-        $.registerChatCommand('./commands/topCommand.js', 'topamount', 1);
-        $.registerChatCommand('./commands/topCommand.js', 'toptimeamount', 1);
-        $.registerChatCommand('./commands/topCommand.js', 'reloadtop', 1);
-        $.registerChatCommand('./commands/topCommand.js', 'reloadtopbots', 1);
+        $.registerChatCommand('./commands/topCommand.js', 'top', $.PERMISSION.Viewer);
+        $.registerChatCommand('./commands/topCommand.js', 'toptime', $.PERMISSION.Viewer);
+        $.registerChatCommand('./commands/topCommand.js', 'topamount', $.PERMISSION.Admin);
+        $.registerChatCommand('./commands/topCommand.js', 'toptimeamount', $.PERMISSION.Admin);
+        $.registerChatCommand('./commands/topCommand.js', 'reloadtop', $.PERMISSION.Admin);
+        $.registerChatCommand('./commands/topCommand.js', 'reloadtopbots', $.PERMISSION.Admin);
     });
+
+    $.getTop5 = getTop5;
+    $.reloadTop = reloadTop;
 })();

@@ -1,0 +1,15 @@
+{
+    "subfolders": {
+        "oauth": "OAuth Setup"
+    },
+    "pages": {
+        "properties": "Properties for botlogin.txt",
+        "panelpasskeys": "Panel Passkeys",
+        "docker": "Docker",
+        "windows": "Windows",
+        "centos": "CentOS",
+        "ubuntu": "Ubuntu",
+        "macos": "macOS",
+        "updatebot": "How To Update"
+    }
+}

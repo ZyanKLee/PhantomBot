@@ -29,40 +29,12 @@ https://www.twitch.tv/signup
 
 During the initial startup we need some details. These are:
 
-- Bot Account Name - We do not recommend using your streaming account.
-- Bot OAuth Token
-- Caster OAuth Token
+- Bot Account - We do not recommend using your streaming account.
 - Which channel to join.
-
-You should know your bot account name already. So that should be easy. Next up is getting the Bot OAuth Token.
-
-#### Bot OAuth Token
-
-To get the Bot OAuth token, make sure you are logged in to twitch with the **account you created for the bot** This token allows the bot to connect to Twitch. When you’ve done that, go to the following url:
-
-https://phantombot.github.io/PhantomBot/oauth/
-
-Click `Connect with Twitch Bot`, then click `Authorize`, and copy the code to a safe location. The code should look something like this:
-
-`123abc`
-
-#### Caster OAuth Token
-
-To get the Caster OAuth token, make sure you are logged in to Twitch with **your own account** This token allows the bot to change your stream title and game, or pull other useful information. When you’re logged in, go to the following url:
-
-https://phantombot.github.io/PhantomBot/oauth/
-
-Click `Connect with Twitch Broadcaster`, then click `Authorize`, and copy the code to a safe location. The code should look something like this:
-
-`123abc`
 
 #### The channel to join
 
 This is the channel that the bot will be active in. This is your username. So if your username is PeterPiper you should be using PeterPiper.
-
-#### Custom Details for the Web Panel
-
-During the initial startup it will ask for a username and password that will be used to log in to the web panel. Make sure you decide on these ahead of time.
 
 ### Initial Startup
 
@@ -72,10 +44,6 @@ To start off you should have the folder `PhantomBot-x.x.x` open.
 In this folder you’ll find several files, find `launch.bat` and double click it to start the Initial Startup.
 
 After it has started, it will walk you through all the steps that require information that you got in the previous step. Do this now.
-
-After going through all the steps, a whole lot of text will scroll by, and you should see the following:
-
-`BotName ready!`
 
 #### [ERROR] BotName is not detected as a moderator
 
@@ -95,7 +63,7 @@ If you’re running PhantomBot locally, you can find the web panel at http://loc
 
 If you’re running PhantomBot on a windows server or VPS, you’ll be able to access the web panel at `http://domain_or_ip:25000/panel`
 
-To login, use the username and password you set during the initial startup.
+To login, use the username and password provided during initial setup.
 
 ### What now?
 

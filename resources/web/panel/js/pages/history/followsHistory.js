@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2020 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
  */
 
 // Function that querys all of the data we need.
-$(function() {
+$(function () {
 
     const FOLLOW_STEP = 100;
 
@@ -54,7 +54,7 @@ $(function() {
         return follows;
     }
 
-    socket.getDBTableValuesByOrder('get_all_follows_by_date', 'followedDate', FOLLOW_STEP, followingOffset, 'DESC', true, function(results) {
+    socket.getDBTableValuesByOrder('get_all_follows_by_date', 'followedDate', FOLLOW_STEP, followingOffset, 'DESC', false, function (results) {
 
         let follows = prepareDataForTable(results);
 
@@ -64,7 +64,7 @@ $(function() {
             'autoWidth': false,
             'data': follows,
             'pageLength': 10,
-            'order': [[ 1, "desc" ]],
+            'order': [[1, "desc"]],
             'columnDefs': [
                 {
                     'width': '35%',
@@ -80,13 +80,13 @@ $(function() {
 
             ],
             'columns': [
-                { 'title': 'Username' },
-                { 'title': 'Date' },
-                { 'title': 'Actions' }
+                {'title': 'Username'},
+                {'title': 'Date'},
+                {'title': 'Actions'}
             ]
         });
 
-        table.on('click', '.btn-info', function() {
+        table.on('click', '.btn-info', function () {
             let follow = $(this).data('follow');
 
             socket.sendCommand('replay_follow', 'replayfollow ' + follow, function () {
@@ -96,15 +96,15 @@ $(function() {
     });
 
     // On load more time button.
-    $('#follows-history-load-more').on('click', function() {
+    $('#follows-history-load-more').on('click', function () {
         let table = $('#followsHistoryTable').DataTable(),
-            dataCount = table.rows().count(),
-            follows = [];
+                dataCount = table.rows().count(),
+                follows = [];
         // Only allow more data to be loaded once the last click was fully loaded.
         if (followingOffset === dataCount) {
             toastr.success('Loading more users into the follows table.');
             // Get the next 100 users.
-            socket.getDBTableValuesByOrder('get_all_follows_by_date', 'followedDate', FOLLOW_STEP, followingOffset, 'DESC', true, function(results) {
+            socket.getDBTableValuesByOrder('get_all_follows_by_date', 'followedDate', FOLLOW_STEP, followingOffset, 'DESC', false, function (results) {
                 follows = prepareDataForTable(results);
 
                 // Add the rows.

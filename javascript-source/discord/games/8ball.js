@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -45,7 +45,7 @@
         /**
          * @discordcommandpath 8ball [question] - Ask the magic 8ball a question.
          */
-        if (command.equalsIgnoreCase('8ball')) {
+        if ($.equalsIgnoreCase(command, '8ball')) {
             if (action === undefined) {
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('8ball.usage'));
                 return;
@@ -62,9 +62,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/games/8ball.js', '8ball', 0);
 
         if (responseCount === 0) {

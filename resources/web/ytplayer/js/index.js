@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -63,7 +63,7 @@ $(function() {
 
                     for (let i = 0; i < results.length; i++) {
                         if (results[i].indexOf('ytPlaylist_') !== -1) {
-                            playlists.push(results[i].substr(results[i].indexOf('_') + 1, results[i].length));
+                            playlists.push(results[i].slice(results[i].indexOf('_') + 1));
                         }
                     }
 
@@ -99,10 +99,14 @@ $(function() {
         player.canSlide = true;
         // Set a var for the first load.
         player.firstLoad = true;
+        player.isPlaylist = false;
+        player.playlist = null;
+        player.index = 0;
+        player.videoId = null;
 
         // Check if the player is disabled right away.
-        player.dbQuery('get_module_status', 'modules', (data) => {
-            if (data['./systems/youtubePlayer.js'] == 'false') {
+        player.isModuleEnabled('get_module_status', (data) => {
+            if (!helpers.isTrue(data['enabled'])) {
                 helpers.getErrorModal('Module Disabled', 'The YouTube player module is disabled, please go and enable it.', () => {
                     window.location.reload();
                 }).modal('toggle');
@@ -112,8 +116,21 @@ $(function() {
             }
         });
 
+        player.addListener('reconnect', (e) => {
+            if (player.isPlaylist) {
+                const lastPlaylist = player.playlist;
+                const lastIndex = player.index;
+                setTimeout(function() {
+                    player.loadPlaylist(lastPlaylist);
+                    player.updateSong(lastIndex);
+                }, 1000);
+            }
+        });
+
         // Add a listener to load the main playlist.
         player.addListener('playlist', (e) => {
+            player.isPlaylist = true;
+            player.playlist = e.playlistname;
             let table = [],
                 playlist = e.playlist;
 
@@ -140,7 +157,7 @@ $(function() {
 
                 // Add position.
                 row.append($('<td/>', {
-                    'text': i,
+                    'text': i + 1,
                     'style': 'width: 5%;'
                 }));
 
@@ -223,6 +240,7 @@ $(function() {
 
         // Add a listener for the songrequest queue.
         player.addListener('songlist', (e) => {
+            player.isPlaylist = false;
             let table = $('#queue-table-content'),
                 songlist = e.songlist;
 
@@ -234,7 +252,7 @@ $(function() {
 
                 // Add position.
                 row.append($('<td/>', {
-                    'text': i
+                    'text': i + 1
                 }));
 
                 // Add song name.
@@ -343,6 +361,11 @@ $(function() {
 
         // Add a listener for the play event.
         player.addListener('play', (e) => {
+            if (player.index === e.index && player.API.getPlayerState() === 1 && player.videoId === e.play) {
+                return;
+            }
+            player.index = e.index;
+            player.videoId = e.play;
             // If this is the first load, start the player paused.
             if (player.firstLoad === true) {
                 // Queue the first video
@@ -530,7 +553,7 @@ $(function() {
 
             for (let i = 0; i < results.length; i++) {
                 if (results[i].indexOf('ytPlaylist_') !== -1) {
-                    playlists.push(results[i].substr(results[i].indexOf('_') + 1, results[i].length));
+                    playlists.push(results[i].slice(results[i].indexOf('_') + 1));
                 }
             }
 

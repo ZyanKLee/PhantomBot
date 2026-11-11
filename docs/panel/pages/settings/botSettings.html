@@ -1,5 +1,5 @@
 <!--
-    Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+    Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,7 +31,8 @@
         <div class="nav-tabs-custom">
             <ul class="nav nav-tabs">
                 <li class="active"><a href="#bot_logging" data-toggle="tab">Logging</a></li>
-                <li><a href="#bot_out" data-toggle="tab">Message Output</a></li>
+                <li><a href="#bot_out" data-toggle="tab">Message Input/Output</a></li>
+                <li><a href="#op_mode_policy" data-toggle="tab">Op Mode Policy</a></li>
             </ul>
 
             <div class="tab-content">
@@ -73,7 +74,7 @@
                     <!-- Logs keep days. -->
                     <div class="form-group">
                         <label>Days to Keep Logs</label>
-                        <input type="number" class="form-control" id="log-days" placeholder="15" data-toggle="tooltip"
+                        <input type="number" class="form-control" id="log-days" value="0" placeholder="0" data-toggle="tooltip"
                             title="How long in days to keep logs for. 0 means never delete logs."/>
                     </div>
                 </div>
@@ -86,6 +87,18 @@
                         <div class="dropdown">
                             <select class="form-control" id="bot-whisper-mode" style="cursor: pointer;" data-toggle="tooltip"
                                 title="Send all responses in whispers except for custom commands.">
+                                <option>Yes</option>
+                                <option>No</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Allow Non-Moderator Whisper Commands. -->
+                    <div class="form-group">
+                        <label>Allow Non-Moderator Whisper Commands</label>
+                        <div class="dropdown">
+                            <select class="form-control" id="bot-allowNonModWhispers" style="cursor: pointer;" data-toggle="tooltip"
+                                title="Allow non-moderators to send commands to the bot via whisper.">
                                 <option>Yes</option>
                                 <option>No</option>
                             </select>
@@ -112,6 +125,47 @@
                                 title="Mute all bot replies except for timeouts.">
                                 <option>Yes</option>
                                 <option>No</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Mute mode. -->
+                    <div class="form-group">
+                        <label>Enable mods to target custom commands without tags at a user using !mycommand @user</label>
+                        <div class="dropdown">
+                            <select class="form-control" id="bot-atenabled" style="cursor: pointer;" data-toggle="tooltip"
+                                title="Mods can target custom commands that don't have tags at users">
+                                <option>Yes</option>
+                                <option>No</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Shoutout API -->
+                    <div class="form-group">
+                        <label><i>!shoutout</i> also Triggers Twitch <i>/shoutout</i> Command</label>
+                        <div class="dropdown">
+                            <select class="form-control" id="bot-shoutout-api" style="cursor: pointer;" data-toggle="tooltip"
+                                title="!shoutout triggers Twitch /shoutout command">
+                                <option>Yes</option>
+                                <option>No</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- OP mode policy -->
+                <div class="tab-pane" id="op_mode_policy">
+                    <!-- OP mode mod policy mode. -->
+                    <div class="form-group">
+                        <label>Mod policy mode</label>
+                        <div class="dropdown">
+                            <select class="form-control" id="op-mode-mod-policy" style="cursor: pointer;" data-toggle="tooltip"
+                                title="Promote/Demote user to/from moderator based on IRC op mode.">
+                                <option value="3">Promote & Demote</option>
+                                <option value="1">Promote</option>
+                                <option value="2">Demote</option>
+                                <option value="0">None</option>
                             </select>
                         </div>
                     </div>

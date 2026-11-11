@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@
 package com.gmt2001.httpwsserver.auth;
 
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.util.AttributeKey;
 
@@ -30,19 +31,34 @@ public interface WsAuthenticationHandler {
     /**
      * Represents the {@code ATTR_AUTHENTICATED} attribute
      */
-    public static final AttributeKey<Boolean> ATTR_AUTHENTICATED = AttributeKey.valueOf("authenticated");
+    AttributeKey<Boolean> ATTR_AUTHENTICATED = AttributeKey.valueOf("authenticated");
 
     /**
-     * Checks if the given {@link WebSocketFrame} is a valid authentication frame, or if the underlying {@link Channel} has already been
-     * authenticated
+     * Represents the {@code attrSentAuthReply} attribute
+     */
+    public static final AttributeKey<Boolean> ATTR_SENT_AUTH_REPLY = AttributeKey.valueOf("sentAuthReply");
+
+    /**
+     * Checks if the given {@link WebSocketFrame} is a valid authentication frame, or if the underlying {@link Channel} has already been authenticated
      *
      * When returning {@code false}, this method MUST also send an {@code Authentication Required} frame back to the client
      *
      * @param ctx The {@link ChannelHandlerContext} of the session
      * @param frame The {@link WebSocketFrame} to check
-     * @return {@code true} if authenticated, {@code false} otherwise
+     * @return {@code true} if authorized
      */
-    public boolean checkAuthorization(ChannelHandlerContext ctx, WebSocketFrame frame);
+    boolean checkAuthorization(ChannelHandlerContext ctx, WebSocketFrame frame);
+
+    /**
+     * Checks if the given {@link HttpHeaders} contains a valid authorization, or if the underlying {@link Channel} has already been authenticated
+     *
+     * When returning {@code false}, this method MUST NOT send any frames back to the client
+     *
+     * @param ctx The {@link ChannelHandlerContext} of the session
+     * @param headers The {@link HttpHeaders} to check
+     * @return {@code true} if authorized
+     */
+    boolean checkAuthorizationHeaders(ChannelHandlerContext ctx, HttpHeaders headers);
 
     /**
      * Invalidates the authentication of the specified {@link ChannelHandlerContext}, if supported by the authentication handler
@@ -51,5 +67,5 @@ public interface WsAuthenticationHandler {
      * @param frame The {@link WebSocketFrame}
      * @throws UnsupportedOperationException Thrown if the selected authentication handler does not support this operation
      */
-    public void invalidateAuthorization(ChannelHandlerContext ctx, WebSocketFrame frame);
+    void invalidateAuthorization(ChannelHandlerContext ctx, WebSocketFrame frame);
 }

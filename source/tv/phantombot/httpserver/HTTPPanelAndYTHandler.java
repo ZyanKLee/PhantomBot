@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,10 +16,20 @@
  */
 package tv.phantombot.httpserver;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Objects;
+
+import com.gmt2001.PathValidator;
 import com.gmt2001.httpwsserver.HttpRequestHandler;
 import com.gmt2001.httpwsserver.HttpServerPageHandler;
 import com.gmt2001.httpwsserver.auth.HttpAuthenticationHandler;
 import com.gmt2001.httpwsserver.auth.HttpBasicAuthenticationHandler;
+import com.mcawful.CustomPanelManifestCache;
+import com.mcawful.CustomPanelManifestCollector;
+
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
@@ -27,12 +37,8 @@ import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.QueryStringDecoder;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import tv.phantombot.PhantomBot;
+import tv.phantombot.CaselessProperties;
+import tv.phantombot.panel.PanelUser.PanelUser;
 
 /**
  *
@@ -40,10 +46,13 @@ import tv.phantombot.PhantomBot;
  */
 public class HTTPPanelAndYTHandler implements HttpRequestHandler {
 
-    private final HttpAuthenticationHandler authHandler;
+    private static final String CUSTOM_MANIFESTS_PATH = "/panel/custom-manifests.json";
 
-    public HTTPPanelAndYTHandler(String panelUser, String panelPass) {
-        authHandler = new HttpBasicAuthenticationHandler("PhantomBot Web Panel", panelUser, panelPass, "/panel/login/");
+    private HttpAuthenticationHandler authHandler;
+
+    public HTTPPanelAndYTHandler() {
+        this.authHandler = new HttpBasicAuthenticationHandler("PhantomBot Web Panel", CaselessProperties.instance().getProperty("paneluser", "panel"),
+                CaselessProperties.instance().getProperty("panelpassword", "panel"), "/panel/login/", true);
     }
 
     @Override
@@ -53,6 +62,11 @@ public class HTTPPanelAndYTHandler implements HttpRequestHandler {
         return this;
     }
 
+    public void updateAuth() {
+        this.authHandler = new HttpBasicAuthenticationHandler("PhantomBot Web Panel", CaselessProperties.instance().getProperty("paneluser", "panel"),
+                CaselessProperties.instance().getProperty("panelpassword", "panel"), "/panel/login/", true);
+    }
+
     @Override
     public HttpAuthenticationHandler getAuthHandler() {
         return authHandler;
@@ -60,38 +74,55 @@ public class HTTPPanelAndYTHandler implements HttpRequestHandler {
 
     @Override
     public void handleRequest(ChannelHandlerContext ctx, FullHttpRequest req) {
+        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
+
         if (!req.method().equals(HttpMethod.GET) && !req.uri().startsWith("/oauth")) {
-            com.gmt2001.Console.debug.println("403");
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, null, null));
+            com.gmt2001.Console.debug.println("405 " + req.method().asciiName() + ": " + qsd.path());
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.METHOD_NOT_ALLOWED));
             return;
         }
 
         if (req.uri().startsWith("/panel/checklogin")) {
-            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.NO_CONTENT, null, null);
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.NO_CONTENT);
             String origin = req.headers().get(HttpHeaderNames.ORIGIN);
             res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
             res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
 
-            com.gmt2001.Console.debug.println("204");
+            com.gmt2001.Console.debug.println("204 " + req.method().asciiName() + ": " + qsd.path());
             HttpServerPageHandler.sendHttpResponse(ctx, req, res);
             return;
         }
 
-        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
+        if (req.method().equals(HttpMethod.GET) && CUSTOM_MANIFESTS_PATH.equals(qsd.path())) {
+            try {
+                CustomPanelManifestCache.CachedResponse cached = CustomPanelManifestCollector.getCachedResponse();
+                PanelUser panelUser = ctx.channel().attr(HttpBasicAuthenticationHandler.ATTR_AUTH_USER).get();
+                byte[] body = CustomPanelManifestCollector.filterManifestBytesForPanelUser(cached.bytes(), panelUser);
+                String etag = CustomPanelManifestCache.computeStrongEtag(body);
+                boolean notModified = HttpServerPageHandler.sendCachedBytes(ctx, req, body, "custom-manifests.json", etag);
+                com.gmt2001.Console.debug.println((notModified ? "304" : "200") + " " + req.method().asciiName() + ": " + CUSTOM_MANIFESTS_PATH);
+                return;
+            } catch (Throwable ex) {
+                com.gmt2001.Console.debug.println("500 " + req.method().asciiName() + ": " + CUSTOM_MANIFESTS_PATH);
+                com.gmt2001.Console.debug.printOrLogStackTrace(ex);
+                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
+                return;
+            }
+        }
 
         try {
             String path = qsd.path();
 
             Path p = Paths.get("./web/", path);
 
-            if (path.endsWith("/") || Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) {
+            if (path.endsWith("/") || Files.isDirectory(p)) {
                 path = path + "/index.html";
                 p = Paths.get("./web/", path);
             }
 
-            if (!p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./web"))) {
+            if (!PathValidator.isValidPathWebAuth(p.toString()) || !PathValidator.isPathUnderExecutionOrDockerWeb(p.toAbsolutePath().normalize())) {
                 com.gmt2001.Console.debug.println("403 " + req.method().asciiName() + ": " + p.toString());
-                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, null, null));
+                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN));
                 return;
             }
 
@@ -102,10 +133,27 @@ public class HTTPPanelAndYTHandler implements HttpRequestHandler {
                 HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, data, p.getFileName().toString()));
             }
         } catch (IOException ex) {
-            com.gmt2001.Console.debug.println("500");
+            com.gmt2001.Console.debug.println("500 " + req.method().asciiName() + ": " + qsd.path());
             com.gmt2001.Console.debug.printStackTrace(ex);
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
         }
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(authHandler);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        HTTPPanelAndYTHandler other = (HTTPPanelAndYTHandler) obj;
+        return Objects.equals(authHandler, other.authHandler);
     }
 
 }

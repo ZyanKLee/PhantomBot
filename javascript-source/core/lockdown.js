@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2021-2025 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,13 +22,13 @@
         timer: null
     };
     var alphaFilter = /([^a-z0-9\s!@,.?:;"\u201C\u201D'\u2019+=\-_#$%^&*()])/ig;
-    
+
     /**
      * @event ircChannelMessage
      */
     $.bind('ircChannelMessage', function(event) {
         if (state.alphaFilter && $.test(event.getMessage(), alphaFilter)) {
-            $.session.sayNow('.timeout ' + event.getSender() + ' 1s Message blocked by lockdown alpha filter');
+            Packages.tv.phantombot.PhantomBot.instance().getSession().sayNow('.timeout ' + event.getSender() + ' 1s Message blocked by lockdown alpha filter');
         }
     });
 
@@ -39,28 +39,28 @@
         var command = event.getCommand(),
             args = event.getArgs();
 
-        if (command.equalsIgnoreCase('lockdown')) {
+        if ($.equalsIgnoreCase(command, 'lockdown')) {
             if (args.length === 0 && !state.lockdown) {
-                $.session.sayNow('.clear');
-                $.session.sayNow('.subscribers');
+                Packages.tv.phantombot.PhantomBot.instance().getSession().sayNow('.clear');
+                Packages.tv.phantombot.PhantomBot.instance().getSession().sayNow('.subscribers');
                 state.lockdown = true;
-                $.session.sayNow('/me === LOCKDOWN ENABLED === Chat has been placed into subscribers-only mode due to a moderator initiating chat lockdown. To end lockdown, a moderator must say: !lockdown end');
-                
+                Packages.tv.phantombot.PhantomBot.instance().getSession().sayNow('/me === LOCKDOWN ENABLED === Chat has been placed into subscribers-only mode due to a moderator initiating chat lockdown. To end lockdown, a moderator must say: !lockdown end');
+
                 setTimeout(function() {
-                    $.session.sayNow('/me === LOCKDOWN ENABLED === Chat has been placed into subscribers-only mode due to a moderator initiating chat lockdown. To end lockdown, a moderator must say: !lockdown end');
+                    Packages.tv.phantombot.PhantomBot.instance().getSession().sayNow('/me === LOCKDOWN ENABLED === Chat has been placed into subscribers-only mode due to a moderator initiating chat lockdown. To end lockdown, a moderator must say: !lockdown end');
                 }, 5e3);
-                
+
                 state.timer = setInterval(function() {
-                    $.session.sayNow('/me === LOCKDOWN ENABLED === Chat has been placed into subscribers-only mode due to a moderator initiating chat lockdown. To end lockdown, a moderator must say: !lockdown end');
+                    Packages.tv.phantombot.PhantomBot.instance().getSession().sayNow('/me === LOCKDOWN ENABLED === Chat has been placed into subscribers-only mode due to a moderator initiating chat lockdown. To end lockdown, a moderator must say: !lockdown end');
                 }, 300e3);
-            } else if(args.length > 0 && args[0].equalsIgnoreCase('help')) {
+            } else if(args.length > 0 && $.equalsIgnoreCase(args[0], 'help')) {
                 $.say('Lockdown Module >> !lockdown - Locks down chat using clearchat and sub-only mode. Ongoing message every 5 minutes >> !lockdown end - Ends a lockdown >> !lockdown alphafilter - Toggles restricting allowed characters in chat');
-            } else if(args.length > 0 && args[0].equalsIgnoreCase('end') && state.lockdown) {
-                $.session.sayNow('/me === LOCKDOWN ENDED === The lockdown is now lifting. Please behave everyone. A moderator may start another lockdown by saying: !lockdown');
-                $.session.sayNow('.subscribersoff');
+            } else if(args.length > 0 && $.equalsIgnoreCase(args[0], 'end') && state.lockdown) {
+                Packages.tv.phantombot.PhantomBot.instance().getSession().sayNow('/me === LOCKDOWN ENDED === The lockdown is now lifting. Please behave everyone. A moderator may start another lockdown by saying: !lockdown');
+                Packages.tv.phantombot.PhantomBot.instance().getSession().sayNow('.subscribersoff');
                 state.lockdown = false;
                 clearInterval(state.timer);
-            } else if(args.length > 0 && args[0].equalsIgnoreCase('alphafilter')) {
+            } else if(args.length > 0 && $.equalsIgnoreCase(args[0], 'alphafilter')) {
                 state.alphaFilter = !state.alphaFilter;
                 $.say('Lockdown alpha restriction is now ' + (state.alphaFilter ? 'enabled' : 'disabled'));
             }
@@ -71,6 +71,6 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./core/lockdown.js', 'lockdown', 2);
+        $.registerChatCommand('./core/lockdown.js', 'lockdown', $.PERMISSION.Mod);
     });
 })();

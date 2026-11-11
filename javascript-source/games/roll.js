@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,8 @@
  * A game where the bot will generate two random dices and award the sender with the points corresponding to the output.
  */
 (function() {
-    var prizes = [];
+    var prizes = []
+        allowWhenOffline = $.getSetIniDbBoolean('rollprizes', 'allowWhenOffline', true);
 
     /* Set default prices in the DB for the Panel */
     $.getSetIniDbNumber('rollprizes', 'prizes_0', 4);
@@ -41,6 +42,7 @@
         prizes[3] = $.getSetIniDbNumber('rollprizes', 'prizes_3', 64);
         prizes[4] = $.getSetIniDbNumber('rollprizes', 'prizes_4', 100);
         prizes[5] = $.getSetIniDbNumber('rollprizes', 'prizes_5', 144);
+        allowWhenOffline = $.getSetIniDbBoolean('rollprizes', 'allowWhenOffline', true);
     }
 
     /**
@@ -57,14 +59,14 @@
         /**
          * @commandpath roll - Roll the dice for some points
          */
-        if (command.equalsIgnoreCase('roll')) {
+        if ($.equalsIgnoreCase(command, 'roll')) {
 
             /**
              * @commandpath roll rewards [double 1's] [2's] [3's] [4's] [5's] [6's] - Set the reward for each set of doubles.
              */
             if (args[0] !== undefined) {
-                if (args[0].equalsIgnoreCase('rewards')) {
-                    if (args.length != 7) {
+                if ($.equalsIgnoreCase(args[0], 'rewards')) {
+                    if (args.length !== 7) {
                         loadPrizes();
                         $.say($.whisperPrefix(sender) + $.lang.get('roll.rewards.usage', prizes.join(' ')));
                         return;
@@ -85,13 +87,28 @@
                     $.inidb.set('rollprizes', 'prizes_5', args[6]);
                     return;
                 }
+
+                /**
+                 * @commandpath roll rolloffline - Toggle allowing rolling when the channel is offline
+                 */
+                if ($.equalsIgnoreCase(args[0], 'rolloffline')) {
+                    allowWhenOffline = !allowWhenOffline;
+                    $.setIniDbBoolean('rollprizes', 'allowWhenOffline', allowWhenOffline);
+                    $.say($.whisperPrefix(sender) + (allowWhenOffline ? $.lang.get('roll.allowwhenoffline.enabled') : $.lang.get('roll.allowwhenoffline.disabled')));
+                    return;
+                }
+            }
+
+            if (!allowWhenOffline && !$.isOnline($.channelName)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('roll.allowwhenoffline.disabled'));
+                return;
             }
 
             dice1 = $.randRange(1, 6);
             dice2 = $.randRange(1, 6);
             resultMessage = $.lang.get('roll.rolled', $.resolveRank(sender), dice1, dice2);
 
-            if (dice1 == dice2) {
+            if (dice1 === dice2) {
                 loadPrizes();
                 switch (dice1) {
                     case 1:
@@ -127,7 +144,8 @@
      */
     $.bind('initReady', function() {
         $.registerChatCommand('./games/roll.js', 'roll');
-        $.registerChatSubcommand('roll', 'rewards', 1);
+        $.registerChatSubcommand('roll', 'rewards', $.PERMISSION.Admin);
+        $.registerChatSubcommand('roll', 'rolloffline', $.PERMISSION.Admin);
     });
 
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,55 +15,207 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-(function() {
-    var currentGame = null;
-    var count = 1;
-    var gamesPlayed;
+/* global Packages */
+
+(function () {
+    let count = 1;
+    let gamesPlayed;
+    let Logger = Packages.com.illusionaryone.Logger;
+    let addonsFileSaveInterval;
+
+    function logModeration(message) {
+        if ($.getIniDbBoolean('chatModerator', 'moderationLogs')) {
+            Logger.instance().log(Logger.LogType.Moderation, '[' + Logger.instance().logTimestamp() + '] ' + message);
+        }
+    }
+
+    $.bind('eventSubAutomodMessageHold', function (event) {
+        if ($.jsString(event.event().broadcasterUserId()) === $.jsString($.viewer.broadcaster().id())) {
+            logModeration('Message ' + event.event().messageId() + ' (' + event.event().message().text() + ') from '
+                + event.event().userLogin() + ' has been held by automod because of level ' + event.event().level() + ' ' + event.event().category());
+        }
+    });
+
+    $.bind('eventSubAutomodMessageUpdate', function (event) {
+        if ($.jsString(event.event().broadcasterUserId()) === $.jsString($.viewer.broadcaster().id())) {
+            let status = $.jsString(event.event().status());
+            if (status === 'approved' || status === 'denied') {
+                logModeration('Message ' + event.event().messageId() + ' from ' + event.event().userLogin() + ' was ' + status + ' by '
+                    + event.event().moderatorUserName());
+            }
+        }
+    });
+
+    $.bind('eventSubChannelModerate', function (event) {
+        if ($.jsString(event.event().broadcasterUserId()) === $.jsString($.viewer.broadcaster().id())) {
+            let d = event.event();
+            let action = $.jsString(d.action());
+            let moderator = d.moderatorUserName();
+            let message = null;
+
+            if (action === 'clear') {
+                message = 'Chat was cleared by ' + moderator;
+            } else if (action === 'delete') {
+                message = d.deleteData().userLogin() + '\'s message was deleted by ' + moderator;
+            } else if (action === 'timeout') {
+                message = d.timeout().userLogin() + ' has been timed out by ' + moderator + ' until ' + d.timeout().expiresAt().toString()
+                    + (d.timeout().reason() !== null && $.strlen(d.timeout().reason()) > 0 ? '. Reason: ' + d.timeout().reason() : '');
+            } else if (action === 'untimeout') {
+                message = d.untimeout().userLogin() + ' has been un-timed out by ' + moderator;
+            } else if (action === 'ban') {
+                message = d.ban().userLogin() + ' has been banned by ' + moderator
+                    + (d.ban().reason() !== null && $.strlen(d.ban().reason()) > 0 ? '. Reason: ' + d.ban().reason() : '');
+            } else if (action === 'unban') {
+                message = d.unban().userLogin() + ' has been un-banned out by ' + moderator;
+            } else if (action === 'mod') {
+                message = d.mod().userLogin() + ' has been modded by ' + moderator;
+            } else if (action === 'unmod') {
+                message = d.unmod().userLogin() + ' has been un-modded by ' + moderator;
+            } else if (action === 'vip') {
+                message = d.vip().userLogin() + ' has been added as VIP by ' + moderator;
+            } else if (action === 'unvip') {
+                message = d.unvip().userLogin() + ' has been removed from VIP by ' + moderator;
+            }
+
+            if (message !== null) {
+                logModeration(message);
+            }
+        }
+    });
+
+    $.bind('eventSubChannelUpdate', function (event) {
+        if ($.jsString(event.event().broadcasterUserId()) === $.jsString($.viewer.broadcaster().id())) {
+            $.twitchcache.setStreamStatus(event.event().title());
+            $.twitchcache.setGameTitle(event.event().categoryName());
+        }
+    });
+
+    $.bind('eventSubStreamOnline', function (event) {
+        if ($.jsString(event.event().broadcasterUserId()) === $.jsString($.viewer.broadcaster().id())) {
+            $.twitchcache.goOnline(true, false);
+        }
+    });
+
+    $.bind('eventSubStreamOffline', function (event) {
+        if ($.jsString(event.event().broadcasterUserId()) === $.jsString($.viewer.broadcaster().id())) {
+            $.twitchcache.goOffline(true);
+        }
+    });
+
+    function subscribeEventSub() {
+        let subscriptions = [
+            Packages.com.gmt2001.twitch.eventsub.subscriptions.automod.message.AutomodMessageHold,
+            Packages.com.gmt2001.twitch.eventsub.subscriptions.automod.message.AutomodMessageUpdate,
+            Packages.com.gmt2001.twitch.eventsub.subscriptions.channel.ChannelModerate
+        ];
+
+        for (let i in subscriptions) {
+            let newSubscription = new subscriptions[i]($.viewer.broadcaster().id());
+            try {
+                newSubscription.create().block();
+            } catch (ex) {
+                $.log.error(ex);
+            }
+        }
+        subscriptions = [
+            Packages.com.gmt2001.twitch.eventsub.subscriptions.channel.ChannelUpdate,
+            Packages.com.gmt2001.twitch.eventsub.subscriptions.stream.StreamOnline,
+            Packages.com.gmt2001.twitch.eventsub.subscriptions.stream.StreamOffline
+        ];
+
+        let success = true;
+        for (let i in subscriptions) {
+            let newSubscription = new subscriptions[i]($.viewer.broadcaster().id());
+            try {
+                let result = newSubscription.create().block();
+                if (!result.isEnabled()) {
+                    success = false;
+                }
+            } catch (ex) {
+                success = false;
+                $.log.error(ex);
+            }
+        }
+
+        $.twitchcache.eventSubMode(success);
+    }
+    
+    setInterval(function(){
+        if (Packages.com.gmt2001.twitch.eventsub.EventSub.instance().sessionId() !== null) {
+            subscribeEventSub();
+        }
+    }, 60 * 60 * 1000);
+
+    /*
+     * @event eventSubWelcome
+     */
+    $.bind('eventSubWelcome', function (event) {
+        if (!event.isReconnect()) {
+            subscribeEventSub();
+        }
+    });
+
+    /*
+     * @event eventSubDisconnected
+     */
+    $.bind('eventSubDisconnected', function() {
+        $.twitchcache.eventSubMode(false);
+    });
 
     /**
      * @event twitchOnline
      */
-    $.bind('twitchOnline', function(event) {
-        if (($.systemTime() - $.inidb.get('panelstats', 'playTimeReset')) >= (480 * 6e4)) {
-            var uptime = getStreamUptimeSeconds($.channelName);
+    $.bind('twitchOnline', function (event) {
+        if (($.systemTime() - $.getIniDbString('panelstats', 'playTimeReset')) >= (480 * 6e4)) {
+            let uptime = getStreamUptimeSeconds($.channelName);
             $.inidb.set('panelstats', 'gameCount', 1);
-            count = $.inidb.get('panelstats', 'gameCount');
+            count = $.getIniDbString('panelstats', 'gameCount');
             $.inidb.del('streamInfo', 'gamesPlayed');
             $.inidb.set('panelstats', 'playTimeStart', $.systemTime());
             $.inidb.set('panelstats', 'playTimeReset', $.systemTime());
             $.inidb.set('streamInfo', 'gamesPlayed', (count + ': ' + $.twitchcache.getGameTitle() + ' - ' + (uptime / 3600 < 10 ? '0' : '') + Math.floor(uptime / 3600) + ':' + ((uptime % 3600) / 60 < 10 ? '0' : '') + Math.floor((uptime % 3600) / 60) + '='));
         }
+
+        addonsFileSaveInterval = setInterval(function() {
+            $.writeToFile(getFollows(), './addons/followHandler/followcount.txt', false);
+            $.writeToFile(getSubscriberCount(), './addons/subscribeHandler/subscribercount.txt', false);
+            $.writeToFile(getSubscriberPoints(), './addons/subscribeHandler/subscriberpoints.txt', false);
+            $.writeToFile(getViewers(), './addons/viewers.txt', false);
+        }, 30e3);
     });
 
     /**
      * @event twitchOffline
      */
-    $.bind('twitchOffline', function(event) {
-        if (($.systemTime() - $.inidb.get('panelstats', 'playTimeReset')) >= (480 * 6e4)) {
+    $.bind('twitchOffline', function (event) {
+        if (($.systemTime() - $.getIniDbString('panelstats', 'playTimeReset')) >= (480 * 6e4)) {
             $.inidb.set('panelstats', 'playTimeStart', 0);
             $.inidb.set('panelstats', 'playTimeReset', 0);
             $.inidb.set('panelstats', 'gameCount', 1);
             $.inidb.del('streamInfo', 'gamesPlayed');
         }
+
         $.inidb.set('streamInfo', 'downtime', String($.systemTime()));
+        clearInterval(addonsFileSaveInterval);
     });
 
     /**
      * @event twitchGameChange
      */
-    $.bind('twitchGameChange', function(event) {
-        var uptime = getStreamUptimeSeconds($.channelName);
+    $.bind('twitchGameChange', function (event) {
+        let uptime = getStreamUptimeSeconds($.channelName);
 
         if ($.isOnline($.channelName)) {
             $.inidb.set('panelstats', 'playTimeStart', $.systemTime());
-            if ($.inidb.exists('streamInfo', 'gamesPlayed')) {
+            let played = $.optIniDbString('streamInfo', 'gamesPlayed');
+            if (played.isPresent()) {
                 $.inidb.incr('panelstats', 'gameCount', 1);
-                count = $.inidb.get('panelstats', 'gameCount');
-                gamesPlayed = $.inidb.get('streamInfo', 'gamesPlayed');
-                gamesPlayed += (count + ': ' + $.twitchcache.getGameTitle() + ' - ' + (uptime / 3600 < 10 ? '0' : '') + Math.floor(uptime / 3600) + ':' + ((uptime % 3600) / 60 < 10 ? '0' : '') + Math.floor((uptime % 3600) / 60) + '=');
-                $.inidb.set('streamInfo', 'gamesPlayed', gamesPlayed);
+                count = $.getIniDbString('panelstats', 'gameCount');
+                played = played.get();
+                played += (count + ': ' + $.twitchcache.getGameTitle() + ' - ' + (uptime / 3600 < 10 ? '0' : '') + Math.floor(uptime / 3600) + ':' + ((uptime % 3600) / 60 < 10 ? '0' : '') + Math.floor((uptime % 3600) / 60) + '=');
+                $.inidb.set('streamInfo', 'gamesPlayed', played);
             } else {
-                count = $.inidb.get('panelstats', 'gameCount');
+                count = $.getIniDbString('panelstats', 'gameCount');
                 $.inidb.set('streamInfo', 'gamesPlayed', (count + ': ' + $.twitchcache.getGameTitle() + ' - ' + (uptime / 3600 < 10 ? '0' : '') + Math.floor(uptime / 3600) + ':' + ((uptime % 3600) / 60 < 10 ? '0' : '') + Math.floor((uptime % 3600) / 60) + '='));
             }
         }
@@ -75,13 +227,7 @@
      * @return string
      */
     function getGamesPlayed() {
-        if ($.inidb.exists('streamInfo', 'gamesPlayed')) {
-            var games = $.inidb.get('streamInfo', 'gamesPlayed'),
-                string = games.split('=').join(', ');
-
-            return string;
-        }
-        return '';
+        return $.getIniDbString('streamInfo', 'gamesPlayed', '').split('=').join(', ');
     }
 
     /**
@@ -89,8 +235,8 @@
      * @export $
      */
     function getPlayTime() {
-        var playTime = parseInt($.inidb.get('panelstats', 'playTimeStart')),
-            time;
+        let playTime = parseInt($.getIniDbString('panelstats', 'playTimeStart')),
+                time;
 
         if (playTime) {
             time = ($.systemTime() - playTime);
@@ -107,8 +253,9 @@
      * @returns {boolean}
      */
     function isOnline(channelName) {
-        if ($.twitchCacheReady.equals('true') && channelName.equalsIgnoreCase($.channelName)) {
-            return $.twitchcache.isStreamOnlineString().equals('true');
+        if ($.twitchcache !== undefined && $.twitchcache !== null && $.twitchCacheReady
+            && (channelName === undefined || channelName === null || $.equalsIgnoreCase(channelName, $.channelName))) {
+            return $.twitchcache.isStreamOnline();
         } else {
             return !$.twitch.GetStream(channelName).isNull('stream');
         }
@@ -121,14 +268,14 @@
      * @returns {string}
      */
     function getStatus(channelName) {
-        if ($.twitchCacheReady.equals('true') && channelName.equalsIgnoreCase($.channelName)) {
+        if ($.twitchCacheReady && (channelName === undefined || channelName === null || $.equalsIgnoreCase(channelName, $.channelName))) {
             return ($.twitchcache.getStreamStatus() + '');
         } else {
-            var channelData = $.twitch.GetChannel(channelName);
+            let channelData = $.twitch.GetChannel(channelName);
 
-            if (!channelData.isNull('status') && channelData.getInt('_http') == 200) {
+            if (!channelData.isNull('status') && channelData.getInt('_http') === 200) {
                 return channelData.getString('status');
-            } else if (channelData.isNull('status') && channelData.getInt('_http') == 200) {
+            } else if (channelData.isNull('status') && channelData.getInt('_http') === 200) {
                 return $.lang.get('common.twitch.no.status');
             }
             $.log.error('Failed to get the current status: ' + channelData.optString('message', 'no message'));
@@ -143,14 +290,14 @@
      * @returns {string}
      */
     function getGame(channelName) {
-        if ($.twitchCacheReady.equals('true') && channelName.equalsIgnoreCase($.channelName)) {
+        if ($.twitchCacheReady && (channelName === undefined || channelName === null || $.equalsIgnoreCase(channelName, $.channelName))) {
             return ($.twitchcache.getGameTitle() + '');
         } else {
-            var channelData = $.twitch.GetChannel(channelName);
+            let channelData = $.twitch.GetChannel(channelName);
 
-            if (!channelData.isNull('game') && channelData.getInt('_http') == 200) {
+            if (!channelData.isNull('game') && channelData.getInt('_http') === 200) {
                 return channelData.getString("game");
-            } else if (channelData.isNull('game') && channelData.getInt('_http') == 200) {
+            } else if (channelData.isNull('game') && channelData.getInt('_http') === 200) {
                 return $.lang.get('common.twitch.no.game');
             }
 
@@ -168,9 +315,9 @@
      * @returns {Url}
      */
     function getLogo(channelName) {
-        var channel = $.twitch.GetChannel(channelName);
+        let channel = $.twitch.GetChannel(channelName);
 
-        if (!channel.isNull('logo') && channel.getInt('_http') == 200) {
+        if (!channel.isNull('logo') && channel.getInt('_http') === 200) {
             return channel.getString('logo');
         } else {
             return 0;
@@ -184,13 +331,13 @@
      * @returns {number}
      */
     function getStreamUptimeSeconds(channelName) {
-        if ($.twitchCacheReady.equals('true') && channelName.equalsIgnoreCase($.channelName)) {
+        if ($.twitchCacheReady && (channelName === undefined || channelName === null || $.equalsIgnoreCase(channelName, $.channelName))) {
             return $.twitchcache.getStreamUptimeSeconds();
         } else {
-            var stream = $.twitch.GetStream(channelName),
-                now = new Date(),
-                createdAtDate,
-                time;
+            let stream = $.twitch.GetStream(channelName),
+                    now = new Date(),
+                    createdAtDate,
+                    time;
 
             if (stream.isNull('stream')) {
                 return 0;
@@ -213,15 +360,15 @@
      * @returns {string}
      */
     function getStreamUptime(channelName) {
-        if ($.twitchCacheReady.equals('true') && channelName.equalsIgnoreCase($.channelName)) {
-            var uptime = $.twitchcache.getStreamUptimeSeconds();
+        if ($.twitchCacheReady && (channelName === undefined || channelName === null || $.equalsIgnoreCase(channelName, $.channelName))) {
+            let uptime = $.twitchcache.getStreamUptimeSeconds();
 
             if (uptime === 0) {
                 $.consoleLn("Fallback uptime");
-                var stream = $.twitch.GetStream(channelName),
-                    now = new Date(),
-                    createdAtDate,
-                    time;
+                let stream = $.twitch.GetStream(channelName),
+                        now = new Date(),
+                        createdAtDate,
+                        time;
 
                 if (stream.isNull('stream')) {
                     return '';
@@ -233,10 +380,10 @@
             }
             return $.getTimeString(uptime);
         } else {
-            var stream = $.twitch.GetStream(channelName),
-                now = new Date(),
-                createdAtDate,
-                time;
+            let stream = $.twitch.GetStream(channelName),
+                    now = new Date(),
+                    createdAtDate,
+                    time;
 
             if (stream.isNull('stream')) {
                 return '';
@@ -258,9 +405,9 @@
      * @returns {string}
      */
     function getStreamDownTime() {
-        var now = $.systemTime(),
-            down = $.inidb.get('streamInfo', 'downtime'),
-            time;
+        let now = $.systemTime(),
+                down = $.getIniDbString('streamInfo', 'downtime'),
+                time;
 
         if (down > 0) {
             time = (now - down);
@@ -276,15 +423,15 @@
      * @returns {string}
      */
     function getStreamStartedAt(channelName) {
-        if ($.twitchCacheReady.equals('true') && channelName.equalsIgnoreCase($.channelName)) {
-            if ($.twitchcache.getStreamOnlineString === 'false') {
+        if ($.twitchCacheReady && (channelName === undefined || channelName === null || $.equalsIgnoreCase(channelName, $.channelName))) {
+            if ($.jsString($.twitchcache.isStreamOnlineString()) === 'false') {
                 return 'Stream is offline';
             }
             createdAtDate = new Date($.twitchcache.getStreamCreatedAt() + '');
             return $.dateToString(createdAtDate);
         } else {
-            var stream = $.twitch.GetStream(channelName),
-                createdAtDate;
+            let stream = $.twitch.GetStream(channelName),
+                    createdAtDate;
 
             if (stream.isNull('stream')) {
                 return 0;
@@ -302,17 +449,17 @@
      * @returns {Number}
      */
     function getViewers(channelName) {
-        if ($.twitchCacheReady.equals('true') && channelName.equalsIgnoreCase($.channelName)) {
-            return $.twitchcache.getViewerCount();
+        if ($.twitchCacheReady && (channelName === undefined || channelName === null || $.equalsIgnoreCase(channelName, $.channelName))) {
+            return $.twitchcache.viewers();
         } else {
-            var stream = $.twitch.GetStream(channelName);
+            let stream = $.twitch.GetStream(channelName);
 
-            if (!stream.isNull('stream') && stream.getInt('_http') == 200) {
+            if (!stream.isNull('stream') && stream.getInt('_http') === 200) {
                 return stream.getJSONObject('stream').getInt('viewers');
-            } else {
-                return 0;
             }
         }
+
+        return 0;
     }
 
     /**
@@ -322,13 +469,17 @@
      * @returns {Number}
      */
     function getFollows(channelName) {
-        var channel = $.twitch.GetChannel(channelName);
-
-        if (!channel.isNull('followers') && channel.getInt('_http') == 200) {
-            return channel.getInt('followers');
+        if ($.twitchCacheReady && (channelName === undefined || channelName === null || $.equalsIgnoreCase(channelName, $.channelName))) {
+            return $.twitchcache.followers();
         } else {
-            return 0;
+            let channel = $.twitch.GetChannel(channelName);
+
+            if (!channel.isNull('followers') && channel.getInt('_http') === 200) {
+                return channel.getInt('followers');
+            }
         }
+
+        return 0;
     }
 
     /**
@@ -339,19 +490,12 @@
      */
     function getFollowDate(sender, username, channelName) {
         username = $.user.sanitize(username);
-        channelName = $.user.sanitize(channelName);
 
-        var user = $.twitch.GetUserFollowsChannel(username, channelName);
-
-        if (user.getInt('_http') === 404) {
+        if (!$.followers.follows(username)) {
             return $.lang.get('followhandler.follow.age.datefmt.404');
         }
 
-        var date = new Date(user.getString('created_at')),
-            dateFormat = new java.text.SimpleDateFormat($.lang.get('followhandler.follow.age.datefmt')),
-            dateFinal = dateFormat.format(date);
-
-        return dateFinal;
+        return $.followers.followedDate(username).format(Packages.java.time.format.DateTimeFormatter.ofPattern($.lang.get('followhandler.follow.age.datefmt')));
     }
 
     /**
@@ -364,17 +508,14 @@
         username = $.user.sanitize(username);
         channelName = $.user.sanitize(channelName);
 
-        var user = $.twitch.GetUserFollowsChannel(username, channelName);
-
-        if (user.getInt('_http') === 404) {
+        if (!$.followers.follows(username)) {
             $.say($.lang.get('followhandler.follow.age.err.404', $.userPrefix(sender, true), username, channelName));
             return;
         }
 
-        var date = new Date(user.getString('created_at')),
-            dateFormat = new java.text.SimpleDateFormat("MMMM dd', 'yyyy"),
-            dateFinal = dateFormat.format(date),
-            days = Math.floor((($.systemTime() - date.getTime()) / 1000) / 86400);
+        let date = $.followers.followedDate(username);
+        let dateFinal = getFollowDate(sender, username, channelName);
+        let days = Packages.java.time.Duration.between(date, Packages.java.time.ZonedDateTime.now()).toDays();
 
         if (days > 0) {
             $.say($.lang.get('followhandler.follow.age.time.days', $.userPrefix(sender, true), username, channelName, dateFinal, days));
@@ -389,17 +530,16 @@
      * @param event
      */
     function getChannelAge(event) {
-        var channelData = $.twitch.GetChannel((!event.getArgs()[0] ? event.getSender() : $.user.sanitize(event.getArgs()[0])));
+        let channelData = $.twitch.GetChannel((!event.getArgs()[0] ? event.getSender() : $.user.sanitize(event.getArgs()[0])));
 
         if (channelData.getInt('_http') === 404 || !channelData.getBoolean('_success')) {
             $.say($.userPrefix(event.getSender(), true) + $.lang.get('channel.age.user.404'));
             return;
         }
 
-        var date = new Date(channelData.getString('created_at')),
-            dateFormat = new java.text.SimpleDateFormat("MMMM dd', 'yyyy"),
-            dateFinal = dateFormat.format(date),
-            days = Math.floor((Math.abs((date.getTime() - $.systemTime()) / 1000)) / 86400);
+        let date = Packages.java.time.ZonedDateTime.parse(channelData.getString('created_at'), Packages.java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        let dateFinal = date.format(Packages.java.time.format.DateTimeFormatter.ofPattern("MMMM dd', 'yyyy"));
+        let days = Packages.java.time.Duration.between(date, Packages.java.time.ZonedDateTime.now()).toDays();
 
         if (days > 0) {
             $.say($.lang.get('common.get.age.days', $.userPrefix(event.getSender(), true), (!event.getArgs()[0] ? event.getSender() : $.user.sanitize(event.getArgs()[0])), dateFinal, days));
@@ -409,18 +549,42 @@
     }
 
     /**
+     * @function getChannelCreatedZonedDateTime
+     * @export $
+     * @param event
+     */
+    function getChannelCreatedZonedDateTime(channel) {
+        let channelData = $.twitch.GetChannel($.user.sanitize(channel));
+
+        if (channelData.getInt('_http') === 404 || !channelData.getBoolean('_success')) {
+            return null;
+        }
+
+        return Packages.java.time.ZonedDateTime.parse(channelData.getString('created_at'), Packages.java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+    }
+
+    /**
      * @function getSubscriberCount
      * @export $
      * @return {number} count
      */
     function getSubscriberCount() {
-        var jsonObject = $.twitch.GetChannelSubscriptions($.channelName.toLowerCase(), 100, 0, true);
-
-        if (jsonObject.getInt('_http') !== 200) {
-            return 0;
+        if ($.twitchCacheReady) {
+            return $.twitchcache.subscribers();
         }
+        return 0;
+    }
 
-        return jsonObject.getInt('_total') - 1;
+    /**
+     * @function getSubscriberPoints
+     * @export $
+     * @return {number} points
+     */
+    function getSubscriberPoints() {
+        if ($.twitchCacheReady) {
+            return $.twitchcache.subscriberPoints();
+        }
+        return 0;
     }
 
     /**
@@ -432,17 +596,22 @@
      * @param {boolean} silent
      */
     function updateGame(channelName, game, sender, silent) {
-        var http = $.twitch.UpdateChannel(channelName, '', game);
+        let http;
+        try {
+            http = $.twitch.UpdateChannel(channelName, '', game);
+        } catch (e) {
+            $.log.error('Failed to change the game. Twitch does not recognize it.');
+        }
 
         if (http.getBoolean('_success')) {
-            if (http.getInt('_http') == 200) {
+            if (http.getInt('_http') === 200) {
                 if (!silent) {
                     $.say($.lang.get('common.game.change', http.getString('game')));
                 }
 
                 $.twitchcache.setGameTitle(http.getString('game'));
                 $.inidb.set('streamInfo', 'game', http.getString('game'));
-                $.log.event($.username.resolve(sender) + ' changed the current game to ' + http.getString('game'));
+                $.log.event($.viewer.getByLogin(sender).name() + ' changed the current game to ' + http.getString('game'));
                 if ($.bot.isModuleEnabled('./commands/deathctrCommand.js')) {
                     $.deathUpdateFile(game);
                 }
@@ -451,7 +620,7 @@
                 $.log.error(http.getString('message'));
             }
         } else {
-            $.log.error('Failed to change the game. Make sure you have your api oauth code set. https://phantombot.github.io/PhantomBot/oauth/');
+            $.log.error('Failed to change the game. Make sure you have your api oauth code set to the caster.');
             $.log.error(http.getString('_exception') + ' ' + http.getString('_exceptionMessage'));
         }
     }
@@ -465,10 +634,10 @@
      * @param {boolean} silent
      */
     function updateStatus(channelName, status, sender, silent) {
-        var http = $.twitch.UpdateChannel(channelName, status, '');
+        let http = $.twitch.UpdateChannel(channelName, status, '');
 
         if (http.getBoolean('_success')) {
-            if (http.getInt('_http') == 200) {
+            if (http.getInt('_http') === 200) {
                 if (!silent) {
                     $.say($.lang.get('common.title.change', http.getString('status')));
                 }
@@ -480,7 +649,7 @@
                 $.log.error(http.getString('message'));
             }
         } else {
-            $.log.error('Failed to change the status. Make sure you have your api oauth code set. https://phantombot.github.io/PhantomBot/oauth/');
+            $.log.error('Failed to change the status. Make sure you have your api oauth code set to the caster.');
             $.log.error(http.getString('_exception') + ' ' + http.getString('_exceptionMessage'));
         }
     }
@@ -501,7 +670,9 @@
     $.getFollowAge = getFollowAge;
     $.getFollowDate = getFollowDate;
     $.getChannelAge = getChannelAge;
+    $.getChannelCreatedZonedDateTime = getChannelCreatedZonedDateTime;
     $.getStreamDownTime = getStreamDownTime;
     $.getGamesPlayed = getGamesPlayed;
     $.getSubscriberCount = getSubscriberCount;
+    $.getSubscriberPoints = getSubscriberPoints;
 })();

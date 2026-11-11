@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
  */
 
 (function() {
-    var autoSetPermissions = $.getSetIniDbBoolean('discordSettings', 'autoSetPermissions', false),
+    let autoSetPermissions = $.getSetIniDbBoolean('discordSettings', 'autoSetPermissions', false),
         autoSetRanks = $.getSetIniDbBoolean('discordSettings', 'autoSetRanks', false);
 
     /*
@@ -32,7 +32,7 @@
      */
     function roleUpdateCheck() {
         if ($.discord.isConnected()) {
-            var users = $.inidb.GetKeyList('discordToTwitch', ''),
+            let users = $.inidb.GetKeyList('discordToTwitch', ''),
                 i;
 
             // If both options are disabled, stop here.
@@ -48,7 +48,10 @@
                 for (i in users) {
                     try {
                         if (hasRankOrPermission($.getIniDbString('discordToTwitch', users[i]))) {
-                            updateRoles(users[i], getRanksAndPermissions($.getIniDbString('discordToTwitch', users[i])));
+                            let user = $.discord.getUserById(users[i]);
+                            if (user !== null && user !== undefined) {
+                                updateRoles(users[i], getRanksAndPermissions($.getIniDbString('discordToTwitch', users[i])), user);
+                            }
                         }
                     } catch (e){
                         $.log.error(e);
@@ -64,12 +67,18 @@
      * @param {Number} id
      * @param {Array}  roles
      */
-    function updateRoles(id, roles) {
-        var oldRoles = $.getIniDbString('discordRoles', id, ',').split(','),
-            currentRoles = $.discordAPI.getUserRoles(id),
+    function updateRoles(id, roles, user) {
+        let oldRoles = $.getIniDbString('discordRoles', id, ',').split(','),
+            currentRoles = null,
             newRoles = roles.join(','),
-            idx,
             i;
+        
+        try {
+            currentRoles = $.discordAPI.getUserRoles(user);
+        } catch (e){
+            $.log.error(e);
+            return;
+        }
 
         // Build our roles list.
         for (i in currentRoles) {
@@ -86,9 +95,19 @@
         // Only update the user's role if there's a new one.
         for (i in roles) {
             if (!hasRole(currentRoles, roles[i], true)) {
-                var roleObjs = $.discordAPI.getRoleObjects(roles);
-                $.discordAPI.editUserRoles(id, roleObjs);
-                $.setIniDbString('discordRoles', id, newRoles);
+                let roleObjs = null;
+                try {
+                    roleObjs = $.discordAPI.getRoleObjects(roles);
+                } catch (e){
+                    $.log.error(e);
+                    return;
+                }
+                try {
+                    $.discordAPI.editUserRoles(user, roleObjs);
+                    $.setIniDbString('discordRoles', id, newRoles);
+                } catch (e){
+                    $.log.error(e);
+                }
                 return;
             }
         }
@@ -98,30 +117,46 @@
      * @function createRoles
      */
     function createRoles() {
+        let roles = $.discordAPI.getGuildRoles();
+
         if (autoSetPermissions === true) {
-            var keys = $.inidb.GetKeyList('groups', ''),
+            let keys = $.inidb.GetKeyList('groups', ''),
                 group = '',
                 i;
 
             for (i in keys) {
                 group = $.getIniDbString('groups', keys[i]).trim();
 
-                var hasTheRole = false;
+                let found = [];
 
                 try {
-                    hasTheRole = $.discordAPI.getRole(group) != null;
+                    for (let x = 0; x < roles.size(); x++) {
+                        if ($.equalsIgnoreCase(roles.get(x).getName(), group)) {
+                            found.push(roles.get(x));
+                        }
+                    }
                 } catch(e){}
 
-                if (!$.inidb.exists('blacklistedDiscordRoles', group.toLowerCase()) && !hasTheRole) {
+                if (!$.inidb.exists('blacklistedDiscordRoles', group.toLowerCase()) && found.length === 0) {
                     $.discordAPI.createRole(group);
-                } else if (hasTheRole && $.inidb.exists('blacklistedDiscordRoles', group.toLowerCase())) {
-                    $.discordAPI.deleteRole(group);
+                } else if (found.length > 0 && $.inidb.exists('blacklistedDiscordRoles', group.toLowerCase())) {
+                    for (let x in found) {
+                        $.discordAPI.deleteRole(found[x]);
+                    }
+                } else if (found.length > 1) {
+                    let first = true;
+                    for (let x in found) {
+                        if (!first) {
+                            $.discordAPI.deleteRole(found[x]);
+                        }
+                        first = false;
+                    }
                 }
             }
         }
 
         if (autoSetRanks === true) {
-            var keys = $.inidb.GetKeyList('ranksMapping', ''),
+            let keys = $.inidb.GetKeyList('ranksMapping', ''),
                 rank = '',
                 i;
 
@@ -130,19 +165,31 @@
 
             for (i in keys) {
                 rank = $.getIniDbString('ranksMapping', keys[i]).trim();
-
-                var hasTheRole = false;
+                
+                let found = [];
 
                 try {
-                    hasTheRole = $.discordAPI.getRole(rank) != null;
+                    for (let x = 0; x < roles.size(); x++) {
+                        if ($.equalsIgnoreCase(roles.get(x).getName(), rank)) {
+                            found.push(roles.get(x));
+                        }
+                    }
                 } catch(e){}
 
-                if (!$.inidb.exists('blacklistedDiscordRoles', rank.toLowerCase()) && !hasTheRole) {
+                if (!$.inidb.exists('blacklistedDiscordRoles', rank.toLowerCase()) && found.length === 0) {
                     $.discordAPI.createRole(rank);
-                    $.setIniDbString('discordRanks', rank, keys[i]);
-                } else if (hasTheRole && $.inidb.exists('blacklistedDiscordRoles', rank.toLowerCase())) {
-                    $.discordAPI.deleteRole(rank);
-                    $.inidb.del('discordRanks', rank);
+                } else if (found.length > 0 && $.inidb.exists('blacklistedDiscordRoles', rank.toLowerCase())) {
+                    for (let x in found) {
+                        $.discordAPI.deleteRole(found[x]);
+                    }
+                } else if (found.length > 1) {
+                    let first = true;
+                    for (let x in found) {
+                        if (!first) {
+                            $.discordAPI.deleteRole(found[x]);
+                        }
+                        first = false;
+                    }
                 }
             }
         }
@@ -159,11 +206,11 @@
     function hasRole(array, role, getName) {
         for (var i in array) {
             if (!getName) {
-                if (array[i].equalsIgnoreCase(role)) {
+                if ($.equalsIgnoreCase(array[i], role)) {
                     return true;
                 }
             } else {
-                if (array[i].getName().equalsIgnoreCase(role)) {
+                if ($.equalsIgnoreCase(array[i].getName(), role)) {
                     return true;
                 }
             }
@@ -179,7 +226,7 @@
             i;
 
         for (i in keys) {
-            if (!$.getIniDbString('ranksMapping', $.getIniDbNumber('discordRanks', keys[i]), '').equalsIgnoreCase(keys[i])) {
+            if (!$.equalsIgnoreCase($.getIniDbString('ranksMapping', $.getIniDbNumber('discordRanks', keys[i]), ''), keys[i])) {
                 $.discordAPI.deleteRole(keys[i]);
                 $.inidb.del('discordRanks', keys[i]);
             }
@@ -203,12 +250,12 @@
      * @return {Array}
      */
     function getRanksAndPermissions(username) {
-        var roles = [],
-            role;
+        let roles = [];
 
         if (autoSetPermissions === true) {
-            if ($.inidb.exists('group', username) && !$.inidb.exists('blacklistedDiscordRoles', $.getIniDbString('group', username).toLowerCase())) {
-                roles.push($.getIniDbString('groups', $.getIniDbString('group', username)));
+            let group = $.optIniDbString('group', username);
+            if (group.isPresent() && !$.inidb.exists('blacklistedDiscordRoles', group.get().toLowerCase())) {
+                roles.push($.getIniDbString('groups', group.get()));
             }
         }
 
@@ -234,7 +281,7 @@
             subAction = args[1],
             actionArgs = args[2];
 
-        if (command.equalsIgnoreCase('rolemanager')) {
+        if ($.equalsIgnoreCase(command, 'rolemanager')) {
             if (action === undefined) {
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.rolemanager.usage'));
                 return;
@@ -243,7 +290,7 @@
             /*
              * @discordcommandpath rolemanager togglesyncpermissions - Makes the bot sync default permissions with those who have their accounts linked.
              */
-            if (action.equalsIgnoreCase('togglesyncpermissions')) {
+            if ($.equalsIgnoreCase(action, 'togglesyncpermissions')) {
                 autoSetPermissions = !autoSetPermissions;
                 $.setIniDbBoolean('discordSettings', 'autoSetPermissions', autoSetPermissions);
                 $.discord.say(channel, $.discord.userPrefix(mention) + (autoSetPermissions ? $.lang.get('discord.rolemanager.permission.sync.on') : $.lang.get('discord.rolemanager.permission.sync.off')));
@@ -252,7 +299,7 @@
             /*
              * @discordcommandpath rolemanager togglesyncranks - Makes the bot sync ranks with those who have their accounts linked.
              */
-            if (action.equalsIgnoreCase('togglesyncranks')) {
+            if ($.equalsIgnoreCase(action, 'togglesyncranks')) {
                 autoSetRanks = !autoSetRanks;
                 $.setIniDbBoolean('discordSettings', 'autoSetRanks', autoSetRanks);
                 $.discord.say(channel, $.discord.userPrefix(mention) + (autoSetRanks ? $.lang.get('discord.rolemanager.ranks.sync.on') : $.lang.get('discord.rolemanager.ranks.sync.off')));
@@ -261,13 +308,13 @@
             /*
              * @discordcommandpath rolemanager blacklist [add / remove] [permission or rank] - Blacklist a rank or permission from being used.
              */
-            if (action.equalsIgnoreCase('blacklist')) {
+            if ($.equalsIgnoreCase(action, 'blacklist')) {
                 if (subAction === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.rolemanager.blacklist.usage'));
                     return;
                 }
 
-                if (subAction.equalsIgnoreCase('add')) {
+                if ($.equalsIgnoreCase(subAction, 'add')) {
                     if (actionArgs === undefined) {
                         $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.rolemanager.blacklist.add.usage'));
                         return;
@@ -278,7 +325,7 @@
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.rolemanager.blacklist.add.success', blacklist));
                 }
 
-                if (subAction.equalsIgnoreCase('remove')) {
+                if ($.equalsIgnoreCase(subAction, 'remove')) {
                     if (actionArgs === undefined) {
                         $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.rolemanager.blacklist.remove.usage'));
                         return;
@@ -293,9 +340,9 @@
     });
 
     /*
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/core/roleManager.js', 'rolemanager', 1);
 
         setInterval(roleUpdateCheck, 3e4);

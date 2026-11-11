@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@ $(run = function () {
             $('#queue-chat').find('iframe').remove();
             return;
         } else {
-            if (location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
+            if (helpers.canEmbedTwitch()) {
                 // Add Twitch chat.
                 $('#queue-chat').html($('<iframe/>', {
                     'frameborder': '0',
@@ -37,13 +37,13 @@ $(run = function () {
                     'src': 'https://www.twitch.tv/embed/' + getChannelName() + '/chat' + (helpers.isDark ? '?darkpopout&' : '?') + 'parent=' + location.hostname
                 }));
             } else {
-                $('#queue-chat').html('Due to changes by Twitch, the chat panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
+                $('#queue-chat').html(helpers.CANT_EMBED_TWITCH_TEXT);
                 $('#queue-chat').addClass('box-body');
             }
         }
 
         // Update the open button to close if the queue is active.
-        if (e['isActive'] === 'true') {
+        if (helpers.isTrue(e['isActive'])) {
             $('#open-or-close-queue').html($('<i/>', {
                 'class': 'fa fa-lock'
             })).append('&nbsp; Close').removeClass('btn-success').addClass('btn-warning');
@@ -57,7 +57,7 @@ $(run = function () {
 
                 const trim = function (username) {
                     if (username.length > 15) {
-                        return username.substr(0, 15) + '...';
+                        return username.slice(0, 15) + '...';
                     } else {
                         return username;
                     }
@@ -125,13 +125,15 @@ $(function () {
     const QUEUE_SCRIPT = './systems/queueSystem.js';
     let canUpdate = true;
 
+    $('#queue-perm').append(helpers.getDropdownGroup('queue-permission', 'User Level', helpers.getGroupNameById(7), helpers.getPermGroupNames()));
+
     /*
      * @function Clears the input boxes of the queue.
      */
     const clearQueueInput = function () {
         $('#queue-title').val('');
         $('#queue-cost, #queue-size').val('0');
-        $('#queue-permission').val('Viewers');
+        $('#queue-permission').val(helpers.getGroupNameById(7));
     };
 
     // Toggle for the module.

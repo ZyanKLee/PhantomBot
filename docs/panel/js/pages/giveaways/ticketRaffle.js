@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,22 +15,17 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global toastr */
+
 $(run = function () {
     socket.getDBValues('traffle_module_status_toggle', {
-        tables: ['modules', 'traffleSettings'],
-        keys: ['./systems/ticketraffleSystem.js', 'isActive']
+        tables: ['modules', 'traffleState', 'traffleState'],
+        keys: ['./systems/ticketraffleSystem.js', 'isActive', 'hasDrawn']
     }, true, function (e) {
         if (!helpers.handleModuleLoadUp(['ticketRaffleListModule', 'ticketRaffleModal'], e['./systems/ticketraffleSystem.js'], 'ticketRaffleModuleToggle')) {
             // Remove the chat.
             $('#ticket-raffle-chat').find('iframe').remove();
             return;
-        }
-
-        // Update the open button to close if the raffle is active.
-        if (e['isActive'] === 'true') {
-            $('#ticket-open-or-close-raffle').html($('<i/>', {
-                'class': 'fa fa-lock'
-            })).append('&nbsp; Close').removeClass('btn-success').addClass('btn-warning');
         }
 
         /**
@@ -50,8 +45,10 @@ $(run = function () {
                         'html': results[i].key
                     }));
 
+                    let ticketJSON = JSON.parse(results[i].value);
+
                     tr.append($('<td/>', {
-                        'html': results[i].value
+                        'html': (ticketJSON[0] + ' (+' + ticketJSON[1] + ')')
                     }));
 
                     table.append(tr);
@@ -59,7 +56,33 @@ $(run = function () {
             });
         };
 
-        if (location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
+        /**
+         * @function Loads the raffle winners.
+         */
+        helpers.temp.loadWinners = function () {
+            socket.getDBValue('get_traffle_winner_list', 'traffleresults', 'winner', function (results) {
+                const table = $('#ticket-raffle-table');
+
+                $('#traffle-list-title').text("Ticket Raffle Winners");
+
+                // Remove current data content.
+                table.find('tr:gt(0)').remove();
+
+                var winners = JSON.parse(results.traffleresults);
+
+                for (let i = 0; i < winners.length; i++) {
+                    const tr = $('<tr/>');
+
+                    tr.append($('<td/>', {
+                        'html': winners[i]
+                    }));
+
+                    table.append(tr);
+                }
+            });
+        };
+
+        if (helpers.canEmbedTwitch()) {
             // Add Twitch chat.
             $('#ticket-raffle-chat').html($('<iframe/>', {
                 'frameborder': '0',
@@ -68,7 +91,7 @@ $(run = function () {
                 'src': 'https://www.twitch.tv/embed/' + getChannelName() + '/chat' + (helpers.isDark ? '?darkpopout&' : '?') + 'parent=' + location.hostname
             }));
         } else {
-            $('#ticket-raffle-chat').html('Due to changes by Twitch, the chat panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
+            $('#ticket-raffle-chat').html(helpers.CANT_EMBED_TWITCH_TEXT);
             $('#ticket-raffle-chat').addClass('box-body');
         }
 
@@ -79,6 +102,25 @@ $(run = function () {
         helpers.setInterval(function () {
             helpers.temp.loadRaffleList();
         }, 5e3);
+
+        // Update the open button to close if the raffle is active.
+        if (helpers.isTrue(e['isActive'])) {
+            $('#ticket-open-or-close-raffle').html($('<i/>', {
+                'class': 'fa fa-lock'
+            })).append('&nbsp; Close').removeClass('btn-success').addClass('btn-warning');
+        }
+
+        // Raffle is over, winners were already drawn
+        if ((helpers.isTrue(e['hasDrawn'])) && (!helpers.isTrue(e['isActive']))) {
+            helpers.clearTimers();
+            //We're zooming wait till the table is ready
+            $('#ticket-raffle-table').ready(function () {
+                helpers.temp.loadWinners();
+            });
+            $('#ticket-draw-raffle').ready(function () {
+                $('#ticket-draw-raffle').prop('disabled', true);
+            });
+        }
     });
 });
 
@@ -93,9 +135,9 @@ $(function () {
     // Open/close raffle button.
     $('#ticket-open-or-close-raffle').on('click', function () {
         if ($(this)[0].innerText.trim() === 'Open') {
-            const cost = $('#ticket-raffle-cost'),
+            const   cost = $('#ticket-raffle-cost'),
                     maxTicket = $('#ticket-raffle-max'),
-                    elegibility = $('#ticket-raffle-perm').val(),
+                    eligibility = $('#ticket-raffle-perm').val(),
                     regLuck = $('#ticket-raffle-reg'),
                     subLuck = $('#ticket-raffle-sub');
 
@@ -107,7 +149,7 @@ $(function () {
                 case helpers.handleInputNumber(subLuck, 1, 10):
                     break;
                 default:
-                    socket.sendCommand('open_traffle_cmd', 'traffle open ' + maxTicket.val() + ' ' + regLuck.val() + ' ' + subLuck.val() + ' ' + cost.val() + ' ' + elegibility, function () {
+                    socket.sendCommand('open_traffle_cmd', 'traffle open ' + maxTicket.val() + ' ' + regLuck.val() + ' ' + subLuck.val() + ' ' + cost.val() + ' ' + eligibility, function () {
                         // Alert the user.
                         toastr.success('Successfully opened the ticket raffle!');
                         // Update the button.
@@ -115,6 +157,14 @@ $(function () {
                             'class': 'fa fa-lock'
                         })).append('&nbsp; Close').removeClass('btn-success').addClass('btn-warning');
                     });
+
+                    $('#traffle-list-title').text("Ticket Raffle List");
+                    $('#ticket-draw-raffle').prop('disabled', false);
+
+                    // Reset the timer in case we destroyed it after the last draw
+                    timers.push(setInterval(function () {
+                        helpers.temp.loadRaffleList();
+                    }, 5e3));
             }
         } else {
             socket.sendCommandSync('close_traffle_cmd', 'traffle close', function () {
@@ -132,12 +182,35 @@ $(function () {
 
     // Draw raffle button.
     $('#ticket-draw-raffle').on('click', function () {
-        socket.sendCommandSync('draw_rraffle_cmd', 'traffle draw', function () {
-            // Alert the user.
-            toastr.success('Successfully drew a winner!');
-            // Reload to remove the winner.
-            helpers.temp.loadRaffleList();
-        });
+        const   drawAmount = $('#ticket-raffle-draw'),
+                prize = $('#ticket-raffle-prize');
+
+        switch (false) {
+            case helpers.handleInputNumber(drawAmount, 1):
+            case helpers.handleInputNumber(prize, 0):
+                break;
+            default:
+                socket.sendCommandSync('draw_traffle_cmd', 'traffle draw ' + drawAmount.val() + ' ' + prize.val(), function () {
+                    // Alert the user.
+                    toastr.success('Successfully drew a winner!');
+
+                    socket.getDBValues('traffle_status_postdraw', {
+                        tables: ['traffleState', 'traffleState'],
+                        keys: ['isActive', 'hasDrawn']
+                    }, true, function (e) {
+                        if ((helpers.isTrue(e['hasDrawn'])) && (!helpers.isTrue(e['isActive']))) {
+                            helpers.clearTimers();
+
+                            $('#ticket-draw-raffle').prop('disabled', true);
+                            $('#ticket-open-or-close-raffle').html($('<i/>', {
+                                'class': 'fa fa-unlock-alt'
+                            })).append('&nbsp; Open').removeClass('btn-warning').addClass('btn-success');
+                        }
+                        //Show the winners
+                        helpers.temp.loadWinners();
+                    });
+                });
+        }
     });
 
     // Reset raffle button.
@@ -147,10 +220,16 @@ $(function () {
         $('#ticket-raffle-cost').val('1');
         $('#ticket-raffle-reg, #ticket-raffle-sub').val('1');
         $('#ticket-raffle-table').find('tr:gt(0)').remove();
+        $('#ticket-raffle-draw').val('1');
+        $('#ticket-raffle-prize').val('0');
+        $('#ticket-draw-raffle').prop('disabled', true);
+        helpers.clearTimers();
 
         $('#ticket-open-or-close-raffle').html($('<i/>', {
             'class': 'fa fa-unlock-alt'
         })).append('&nbsp; Open').removeClass('btn-warning').addClass('btn-success');
+
+        $('#traffle-list-title').val('Ticket Raffle List');
 
         // Close raffle but don't pick a winner.
         socket.sendCommand('reset_traffle_cmd', 'traffle reset', function () {
@@ -161,8 +240,8 @@ $(function () {
     // Raffle settings button.
     $('#ticket-raffle-settings').on('click', function () {
         socket.getDBValues('get_traffle_settings', {
-            tables: ['settings', 'settings', 'settings'],
-            keys: ['tRaffleMSGToggle', 'traffleMessage', 'traffleMessageInterval']
+            tables: ['traffleSettings', 'traffleSettings', 'traffleSettings', 'traffleSettings', 'traffleSettings'],
+            keys: ['traffleMSGToggle', 'traffleOpenDraw', 'traffleMessage', 'traffleMessageInterval', 'traffleLimiter']
         }, true, function (e) {
             helpers.getModal('traffle-settings-modal', 'Ticket Raffle Settings', 'Save', $('<form/>', {
                 'role': 'form'
@@ -186,13 +265,20 @@ $(function () {
                             .append(helpers.getCollapsibleAccordion('main-2', 'Extra Settings', $('<form/>', {
                                 'role': 'form'
                             })
+                                    .append(helpers.getDropdownGroup('opendraw', 'Don\'t Close On Draw', (helpers.isTrue(e['traffleOpenDraw']) ? 'Yes' : 'No'), ['Yes', 'No'],
+                                            'If disabled, the raffle will close automatically when drawing winners.'))
                                     // Add toggle for warning messages.
-                                    .append(helpers.getDropdownGroup('warning-msg', 'Enable Warning Messages', (e['tRaffleMSGToggle'] === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
-                                            'If warning messages should be said in chat when a user already entered, or doesn\'t have enough points.'))))),
+                                    .append(helpers.getDropdownGroup('warning-msg', 'Enable Warning Messages', (helpers.isTrue(e['traffleMSGToggle']) ? 'Yes' : 'No'), ['Yes', 'No'],
+                                            'If warning messages should be said in chat when a user already entered, or doesn\'t have enough points.'))
+                                    // Add toggle for the limiter.
+                                    .append(helpers.getDropdownGroup('limiter', 'Enable limiter', (helpers.isTrue(e['traffleLimiter']) ? 'Yes' : 'No'), ['Yes', 'No'],
+                                            'ON: Limit the total amount of tickets (bought tickets + bonus tickets) to the set limit. OFF: Limit only the amount of bought tickets.'))))),
                     function () {
                         let raffleTimer = $('#msg-timer'),
                                 raffleMessage = $('#msg-msg'),
-                                warningMsg = $('#warning-msg').find(':selected').text() === 'Yes';
+                                openDraw = $('#opendraw').find(':selected').text() === 'Yes',
+                                warningMsg = $('#warning-msg').find(':selected').text() === 'Yes',
+                                limiter = $('#limiter').find(':selected').text() === 'Yes';
 
                         switch (false) {
                             case helpers.handleInputNumber(raffleTimer):
@@ -200,9 +286,9 @@ $(function () {
                                 break;
                             default:
                                 socket.updateDBValues('update_traffle_settings_2', {
-                                    tables: ['settings', 'settings', 'settings'],
-                                    keys: ['tRaffleMSGToggle', 'traffleMessage', 'traffleMessageInterval'],
-                                    values: [warningMsg, raffleMessage.val(), raffleTimer.val()]
+                                    tables: ['traffleSettings', 'traffleSettings', 'traffleSettings', 'traffleSettings', 'traffleSettings'],
+                                    keys: ['traffleMSGToggle', 'traffleOpenDraw', 'traffleMessage', 'traffleMessageInterval', 'traffleLimiter'],
+                                    values: [warningMsg, openDraw, raffleMessage.val(), raffleTimer.val(), limiter]
                                 }, function () {
                                     socket.sendCommand('raffle_reload_cmd', 'reloadtraffle', function () {
                                         // Close the modal.

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,10 +17,20 @@
 
 window.panelSettings = {
     channelName: '',
+    botName: '',
     displayName: '',
     auth: ''
 };
 
-function getChannelName() { return window.panelSettings.channelName; }
-function getAuth() { return window.panelSettings.auth; }
-function getDisplayName() { return window.panelSettings.displayName; }
+function getChannelName() {
+    return window.panelSettings.channelName;
+}
+function getBotName() {
+    return window.panelSettings.botName;
+}
+function getAuth() {
+    return window.panelSettings.auth;
+}
+function getDisplayName() {
+    return helpers.currentPanelUserData.username;
+}

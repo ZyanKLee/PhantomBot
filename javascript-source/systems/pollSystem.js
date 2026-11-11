@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,24 +23,25 @@
  */
 (function () {
     var poll = {
-        pollId: 0,
-        options: [],
-        votes: [],
-        voters: [],
-        callback: function () {},
-        pollRunning: false,
-        pollMaster: '',
-        time: 0,
-        question: '',
-        minVotes: 0,
-        result: '',
-        hasTie: 0,
-        counts: [],
-        startTime: 0
-    },
+            pollId: 0,
+            options: [],
+            votes: [],
+            voters: [],
+            callback: function () {},
+            pollRunning: false,
+            pollMaster: '',
+            time: 0,
+            question: '',
+            minVotes: 0,
+            result: '',
+            hasTie: 0,
+            counts: [],
+            startTime: 0
+        },
             timeout,
-            saveStateInterval;
-    var objOBS = [];
+            saveStateInterval,
+            objOBS = [],
+            _pollLock = new Packages.java.util.concurrent.locks.ReentrantLock();
 
     /**
      * @function hasKey
@@ -54,20 +55,19 @@
 
         if (subIndex > -1) {
             for (i in list) {
-                if (list[i][subIndex].equalsIgnoreCase(value)) {
+                if ($.equalsIgnoreCase(list[i][subIndex], value)) {
                     return true;
                 }
             }
         } else {
             for (i in list) {
-                if (list[i].equalsIgnoreCase(value)) {
+                if ($.equalsIgnoreCase(list[i], value)) {
                     return true;
                 }
             }
         }
         return false;
     }
-    ;
 
     // Compile regular expressions.
     var rePollOpenFourOptions = new RegExp(/"([\w\W]+)"\s+"([\w\W]+)"\s+(\d+)\s+(\d+)/),
@@ -90,7 +90,7 @@
         var optionsStr = "";
 
         if (poll.pollRunning) {
-            return false
+            return false;
         }
 
         objOBS = [];
@@ -139,7 +139,8 @@
 
         var msg = JSON.stringify({
             'start_poll': 'true',
-            'data': JSON.stringify(objOBS)
+            'title': question,
+            'options': objOBS
         });
         $.alertspollssocket.sendJSONToAll(msg);
 
@@ -149,18 +150,27 @@
         saveState();
         return true;
     }
-    ;
 
     function reopen() {
-        if (!$.inidb.FileExists('pollState') || !$.inidb.HasKey('pollState', '', 'poll') || !$.inidb.HasKey('pollState', '', 'objOBS')) {
+        if (!$.inidb.FileExists('pollState')) {
             return;
         }
 
-        poll = JSON.parse($.inidb.get('pollState', 'poll'));
-        objOBS = JSON.parse($.inidb.get('pollState', 'objOBS'));
+        let tempPoll = $.getIniDbString('pollState', 'poll'),
+                tempObjOBs = $.getIniDbString('pollState', 'objOBS');
+
+        if (tempPoll === null || tempObjOBs === null) {
+            return;
+        }
+
+        poll = JSON.parse(tempPoll);
+        objOBS = JSON.parse(tempObjOBs);
         poll.callback = saywinner;
 
         if (poll.pollRunning) {
+            $.inidb.set('pollPanel', 'title', poll.question);
+            $.inidb.set('pollPanel', 'options', poll.options.join(','));
+            $.inidb.set('pollPanel', 'isActive', 'true');
             if (poll.time > 0) {
                 var timeleft = poll.time - ($.systemTime() - poll.startTime);
                 timeout = setTimeout(function () {
@@ -170,15 +180,21 @@
 
             var msg = JSON.stringify({
                 'start_poll': 'true',
-                'data': JSON.stringify(objOBS)
+                'title': poll.question,
+                'options': objOBS
             });
             $.alertspollssocket.sendJSONToAll(msg);
         }
     }
 
     function saveState() {
-        $.inidb.set('pollState', 'poll', JSON.stringify(poll));
-        $.inidb.set('pollState', 'objOBS', JSON.stringify(objOBS));
+        _pollLock.lock();
+        try {
+            $.inidb.set('pollState', 'poll', JSON.stringify(poll));
+            $.inidb.set('pollState', 'objOBS', JSON.stringify(objOBS));
+        } finally {
+            _pollLock.unlock();
+        }
     }
 
     /**
@@ -205,20 +221,28 @@
         }
 
         optionIndex--;
-        poll.voters.push(sender);
-        poll.votes.push(optionIndex);
-        for (var i = 0; i < objOBS.length; i++) {
-            if (objOBS[i].label == poll.options[optionIndex])
-                objOBS[i].votes++;
+        _pollLock.lock();
+        try {
+            poll.voters.push(sender);
+            poll.votes.push(optionIndex);
+            for (var i = 0; i < objOBS.length; i++) {
+                if (objOBS[i].label == poll.options[optionIndex]) {
+                    objOBS[i].votes++;
+                }
+            }
+
+            var msg = JSON.stringify({
+                'new_vote': 'true',
+                'title': poll.question,
+                'options': objOBS
+            });
+        } finally {
+            _pollLock.unlock();
         }
-        var msg = JSON.stringify({
-            'new_vote': 'true',
-            'data': JSON.stringify(objOBS)
-        });
+
         $.alertspollssocket.sendJSONToAll(msg);
         $.inidb.incr('pollVotes', poll.options[optionIndex], 1);
     }
-    ;
 
     /**
      * @function endPoll
@@ -226,7 +250,8 @@
      */
     function endPoll() {
         var mostVotes = -1,
-                i;
+                i,
+                winner;
 
         if (!poll.pollRunning) {
             return;
@@ -272,7 +297,6 @@
         poll.callback(poll.result);
         saveState();
     }
-    ;
 
     function saywinner(winner) {
         if (winner === false) {
@@ -296,7 +320,7 @@
                 args = event.getArgs(),
                 action = args[0];
 
-        if (command.equalsIgnoreCase('vote') && action !== undefined) {
+        if ($.equalsIgnoreCase(command, 'vote') && action !== undefined) {
             if (poll.pollRunning) {
                 vote(sender, action);
             }
@@ -305,7 +329,7 @@
         /**
          * @commandpath poll - Announce information about a poll, if one is running.
          */
-        if (command.equalsIgnoreCase('poll')) {
+        if ($.equalsIgnoreCase(command, 'poll')) {
             if (!action) {
                 if (poll.pollRunning) {
                     var optionsStr = "";
@@ -322,7 +346,7 @@
             /**
              * @commandpath poll results - Announce result information about the last run poll (Poll information is retained until shutdown)
              */
-            if (action.equalsIgnoreCase('results')) {
+            if ($.equalsIgnoreCase(action, 'results')) {
                 if (poll.pollRunning) {
                     $.say($.lang.get('pollsystem.results.running'));
                 } else if (poll.result != '') {
@@ -339,7 +363,7 @@
             /**
              * @commandpath poll open ["poll question"] ["option1, option2, ..."] [seconds] [min votes] - Starts a poll with question and options. Optionally provide seconds and min votes.
              */
-            if (action.equalsIgnoreCase('open')) {
+            if ($.equalsIgnoreCase(action, 'open')) {
                 var time = 0,
                         question = '',
                         options = [],
@@ -383,7 +407,7 @@
             /**
              * @commandpath poll close - Close the current poll and tally the votes
              */
-            if (action.equalsIgnoreCase('close')) {
+            if ($.equalsIgnoreCase(action, 'close')) {
                 if (!poll.pollRunning) {
                     $.say($.whisperPrefix(sender) + $.lang.get('pollsystem.close.nopoll'));
                     return;
@@ -394,11 +418,12 @@
     });
 
     $.bind('webPanelSocketUpdate', function (event) {
-        if (event.getScript().equalsIgnoreCase('./systems/pollSystem.js')) {
+        if ($.equalsIgnoreCase(event.getScript(), './systems/pollSystem.js')) {
             if (poll.pollRunning) {
                 var msg = JSON.stringify({
                     'start_poll': 'true',
-                    'data': JSON.stringify(objOBS)
+                    'title': poll.question,
+                    'options': objOBS
                 });
                 $.alertspollssocket.sendJSONToAll(msg);
             }
@@ -409,11 +434,11 @@
      * @event initReady
      */
     $.bind('initReady', function () {
-        $.registerChatCommand('./systems/pollSystem.js', 'poll', 2);
-        $.registerChatCommand('./systems/pollSystem.js', 'vote', 7);
-        $.registerChatSubcommand('poll', 'results', 2);
-        $.registerChatSubcommand('poll', 'open', 2);
-        $.registerChatSubcommand('poll', 'close', 2);
+        $.registerChatCommand('./systems/pollSystem.js', 'poll', $.PERMISSION.Mod);
+        $.registerChatCommand('./systems/pollSystem.js', 'vote', $.PERMISSION.Viewer);
+        $.registerChatSubcommand('poll', 'results', $.PERMISSION.Mod);
+        $.registerChatSubcommand('poll', 'open', $.PERMISSION.Mod);
+        $.registerChatSubcommand('poll', 'close', $.PERMISSION.Mod);
 
         reopen();
     });
@@ -421,8 +446,8 @@
     /**
      * @event Shutdown
      */
-    $.bind('Shutdown', function() {
-       saveState();
+    $.bind('Shutdown', function () {
+        saveState();
     });
 
     /** Export functions to API */

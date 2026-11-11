@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,7 +41,7 @@
         /**
          * @discordcommandpath random - Will display something really random.
          */
-        if (command.equalsIgnoreCase('random')) {
+        if ($.equalsIgnoreCase(command, 'random')) {
             var random;
             do {
                 random = $.randRange(1, responseCount);
@@ -53,9 +53,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/games/random.js', 'random', 0);
 
         if (responseCount === 0) {

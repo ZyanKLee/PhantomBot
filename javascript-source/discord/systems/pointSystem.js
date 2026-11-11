@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,9 +30,7 @@
             return 0;
         }
 
-        username = username.toLowerCase();
-
-        return ($.inidb.exists('points', username) ? parseInt($.inidb.get('points', username)) : 0);
+        return $.getIniDbNumber('points', username.toLowerCase(), 0);
     }
 
     /*
@@ -46,6 +44,20 @@
 
         if (username !== null) {
             $.inidb.decr('points', username.toLowerCase(), amount);
+        }
+    }
+
+    /*
+     * @function incrUserPoints
+     *
+     * @param  {Number} id
+     * @param  {Number} amount
+     */
+    function incrUserPoints(id, amount) {
+        var username = $.discord.resolveTwitchName(id);
+
+        if (username !== null) {
+            $.inidb.incr('points', username.toLowerCase(), amount);
         }
     }
 
@@ -64,7 +76,7 @@
         /**
          * @discordcommandpath points - Tells you how many points you have if you linked in you Twitch account.
          */
-        if (command.equalsIgnoreCase('points')) {
+        if ($.equalsIgnoreCase(command, 'points')) {
             if (action === undefined) {
                 if (twitchName !== null) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.pointsystem.self.points', $.getPointsString($.getUserPoints(twitchName)), $.getTimeString($.getUserTime(twitchName)), $.resolveRank(twitchName)));
@@ -81,13 +93,14 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/systems/pointSystem.js', 'points', 0);
     });
 
     /* Export to the API */
     $.discord.getUserPoints = getUserPoints;
     $.discord.decrUserPoints = decrUserPoints;
+    $.discord.incrUserPoints = incrUserPoints;
 })();

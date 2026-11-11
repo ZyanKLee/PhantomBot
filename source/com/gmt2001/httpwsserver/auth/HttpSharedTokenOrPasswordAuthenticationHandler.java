@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,21 +16,17 @@
  */
 package com.gmt2001.httpwsserver.auth;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelFutureListener;
+import com.gmt2001.httpwsserver.HttpServerPageHandler;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.FullHttpRequest;
-import static io.netty.handler.codec.http.HttpHeaderNames.CONNECTION;
-import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
+import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpResponseStatus;
-import io.netty.handler.codec.http.HttpUtil;
-import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 import io.netty.handler.codec.http.QueryStringDecoder;
-import io.netty.util.CharsetUtil;
+import tv.phantombot.PhantomBot;
+
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Provides a {@link HttpAuthenticationHandler} that implements password and token-based authentication
@@ -61,6 +57,7 @@ public class HttpSharedTokenOrPasswordAuthenticationHandler implements HttpAuthe
      * Constructor
      *
      * @param token The authorization token that grants access
+     * @param password The password that also grants access
      */
     public HttpSharedTokenOrPasswordAuthenticationHandler(String token, String password) {
         this.token = token;
@@ -71,37 +68,24 @@ public class HttpSharedTokenOrPasswordAuthenticationHandler implements HttpAuthe
      * Checks if the given {@link FullHttpRequest} has the correct header with valid credentials
      *
      * @param ctx The {@link ChannelHandlerContext} of the session
-     * @param frame The {@link FullHttpRequest} to check
-     * @return {@code true} if authenticated, {@code false} otherwise. When returning {@code false}, this method will also reply with
-     * {@code 401 Unauthorized} and then close the channel
+     * @param req The {@link FullHttpRequest} to check
+     * @return, this method will also reply with {@code 401 Unauthorized} and then close the channel
      */
     @Override
     public boolean checkAuthorization(ChannelHandlerContext ctx, FullHttpRequest req) {
-        HttpHeaders headers = req.headers();
-        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
-
-        String auth1 = headers.get("password");
-        String auth2 = headers.get("webauth");
-        String auth3 = qsd.parameters().getOrDefault("webauth", NOARG).get(0);
-        String astr = auth1 != null ? auth1 : (auth2 != null ? auth2 : (auth3 != null ? auth3 : ""));
-
-        if ((auth1 != null && (auth1.equals(password) || auth1.equals("oauth:" + password))) || (auth2 != null && auth2.equals(token)) || (auth3 != null && auth3.equals(token))) {
+        if (this.isAuthorized(ctx, req)) {
             return true;
         }
 
-        DefaultFullHttpResponse res = new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.UNAUTHORIZED, Unpooled.buffer());
-        ByteBuf buf = Unpooled.copiedBuffer(res.status().toString(), CharsetUtil.UTF_8);
-        res.content().writeBytes(buf);
-        buf.release();
-        HttpUtil.setContentLength(res, res.content().readableBytes());
+        FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.UNAUTHORIZED);
 
-        com.gmt2001.Console.debug.println("401");
-        com.gmt2001.Console.debug.println("Expected (p): >oauth:" + password + "<");
-        com.gmt2001.Console.debug.println("Expected (t): >" + token + "<");
-        com.gmt2001.Console.debug.println("Got: >" + astr + "<");
+        if (PhantomBot.getEnableDebugging()) {
+            QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
 
-        res.headers().set(CONNECTION, CLOSE);
-        ctx.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
+            com.gmt2001.Console.debug.println("401 " + req.method().asciiName() + ": " + qsd.path());
+        }
+
+        HttpServerPageHandler.sendHttpResponse(ctx, req, res);
 
         return false;
     }
@@ -109,5 +93,44 @@ public class HttpSharedTokenOrPasswordAuthenticationHandler implements HttpAuthe
     @Override
     public void invalidateAuthorization(ChannelHandlerContext ctx, FullHttpRequest req) {
         throw new UnsupportedOperationException("Not supported by this authentication handler.");
+    }
+
+    @Override
+    public boolean isAuthorized(ChannelHandlerContext ctx, FullHttpRequest req) {
+        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
+
+        String auth3 = qsd.parameters().getOrDefault("webauth", NOARG).get(0);
+
+        return this.isAuthorized(ctx, req.headers()) || (auth3 != null && auth3.equals(token));
+    }
+
+    @Override
+    public boolean isAuthorized(String user, String pass) {
+        return pass.equals(password) || pass.equals("oauth:" + password) || pass.equals(token);
+    }
+
+    @Override
+    public boolean isAuthorized(ChannelHandlerContext ctx, HttpHeaders headers) {
+        String auth1 = headers.get("password");
+        String auth2 = headers.get("webauth");
+
+        return (auth1 != null && (auth1.equals(password) || auth1.equals("oauth:" + password))) || (auth2 != null && auth2.equals(token));
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(token, password);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        HttpSharedTokenOrPasswordAuthenticationHandler other = (HttpSharedTokenOrPasswordAuthenticationHandler) obj;
+        return Objects.equals(token, other.token) && Objects.equals(password, other.password);
     }
 }

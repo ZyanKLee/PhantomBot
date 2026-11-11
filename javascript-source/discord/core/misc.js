@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -42,16 +42,6 @@
      */
     function userPrefix(username) {
         return (username + ', ');
-    }
-
-    /**
-     * @function isConnected
-     *
-     * @return {boolean}
-     */
-    function isConnected() {
-        return $.discordAPI.isLoggedIn() &&
-        $.discordAPI.checkConnectionStatus() == Packages.tv.phantombot.discord.DiscordAPI.ConnectionState.CONNECTED
     }
 
     /**
@@ -100,6 +90,13 @@
      * @param {string} message
      */
     function say(channel, message) {
+        if (message === undefined || message === null) {
+            return;
+        }
+        message = $.jsString(message);
+        if (message.trim().length === 0) {
+            return;
+        }
         if (embedReg.test(message)) {
             return $.discordAPI.sendMessageEmbed(channel, message.match(embedReg)[1], message.match(embedReg)[2]);
         } else if (fileRegMsg.test(message)) {
@@ -133,6 +130,55 @@
     }
 
     /**
+     * @function paginateArrayDiscord
+     * @export $
+     * @param {Array}   Input array of data to paginate
+     * @param {String}  Key in the $.lang system
+     * @param {String}  Seperator to use between items
+     * @param {String}  Value of sender for $.whisperPrefix
+     * @param {Number}  Page to display, 0 for ALL
+     * @return {Number} Total number of pages.
+     *
+     */
+    function paginateArrayDiscord(array, langKey, sep, channel, sender, display_page) {
+        var idx,
+                output = '',
+                maxlen,
+                hasNoLang = langKey.startsWith('NULL'),
+                pageCount = 0;
+
+        if (display_page === undefined) {
+            display_page = 0;
+        }
+
+        maxlen = 1400 - (hasNoLang ? langKey.length : $.lang.get(langKey).length);
+        langKey = langKey.replace('NULL', '');
+        for (idx in array) {
+            output += array[idx];
+            if (output.length >= maxlen) {
+                pageCount++;
+                if (output.length > 0) {
+                    if (display_page === 0 || display_page === pageCount) {
+                        $.discord.say(channel, $.discord.userPrefix(sender) + ' ' + (hasNoLang ? (langKey + output) : $.lang.get(langKey, output)));
+                    }
+                }
+                output = '';
+            } else {
+                if (idx < array.length - 1) {
+                    output += sep;
+                }
+            }
+        }
+        pageCount++;
+        if (output.length > 0) {
+            if (display_page === 0 || display_page === pageCount) {
+                $.discord.say(channel, $.discord.userPrefix(sender) + ' ' + (hasNoLang ? (langKey + output) : $.lang.get(langKey, output)));
+            }
+        }
+        return pageCount;
+    }
+
+    /**
      * @function removeGame
      *
      * @export $.discord
@@ -149,22 +195,36 @@
      * @export $.discord
      */
     function setRole(role, username) {
-        return $.discordAPI.addRole(role, username);
+        $.discordAPI.addRole(role, username);
+    }
+
+    /**
+     * @function getUserById Gets a Discord user by their Discord User ID, if they are a member of the Discord server
+     *
+     * @param {string} userId The Discord User ID to search for
+     * @return {Packages.discord4j.core.object.entity.User} `null` if the user is not found on the Discord server; otherwise, the user object
+     * @export $.discord
+     */
+    function getUserById(userId) {
+        try {
+            return $.discordAPI.getUserByIdAsync(Packages.java.lang.Long.parseUnsignedLong(userId)).block();
+        } catch (ex) {}
+        return null;
     }
 
     function sanitizeChannelName(channel) {
         channel = channel.trim();
 
-        if (channel.substr(0, 1) === '<') {
-            channel = channel.substr(1);
+        if (channel.startsWith('<')) {
+            channel = channel.slice(1);
         }
 
-        if (channel.substr(0, 1) === '#') {
-            channel = channel.substr(1);
+        if (channel.startsWith('#')) {
+            channel = channel.slice(1);
         }
 
-        if (channel.substr(channel.length - 1, 1) === '>') {
-            channel = channel.substr(0, channel.length - 1);
+        if (channel.endsWith('>')) {
+            channel = channel.slice(0, channel.length - 1);
         }
 
         return channel;
@@ -172,14 +232,14 @@
 
     /**
      * @function handleDeleteReaction
-     * 
+     *
      * @param {object} user
      * @param {object} message
      * @param {object} commandMessage
      * @export $.discord
      */
     function handleDeleteReaction(user, message, commandMessage) {
-        var xEmoji = Packages.discord4j.core.object.reaction.ReactionEmoji.unicode('❌');
+        var xEmoji = Packages.discord4j.core.object.reaction.Emoji.unicode('❌');
         message.addReaction(xEmoji);
 
         messageDeleteArray[message.getId().asString()] = {
@@ -209,13 +269,13 @@
         /**
          * @discordcommandpath module enable [path] - Enables any modules in the bot, it should only be used to enable discord modules though.
          */
-        if (command.equalsIgnoreCase('module')) {
-            if (action === undefined || (subAction === undefined && !action.equalsIgnoreCase('list'))) {
+        if ($.equalsIgnoreCase(command, 'module')) {
+            if (action === undefined || (subAction === undefined && !$.equalsIgnoreCase(action, 'list'))) {
                 say(channel, userPrefix(mention) + $.lang.get('discord.misc.module.usage'));
                 return;
             }
 
-            if (action.equalsIgnoreCase('enable')) {
+            if ($.equalsIgnoreCase(action, 'enable')) {
                 var module = $.bot.getModule(subAction);
 
                 if (module !== undefined) {
@@ -229,10 +289,22 @@
                         if (hookIndex !== -1) {
                             $.bot.getHook(module.scriptName, 'initReady').handler();
                         }
+                    } catch (ex) {
+                        $.log.error('[DISCORD] Unable to call initReady for enabled module (' + module.scriptName + '): ' + ex.message);
+                        $.consoleLn("Sending stack trace to error log...");
+                        Packages.com.gmt2001.Console.err.printStackTrace(ex.javaException);
+                    }
+
+                    hookIndex = $.bot.getHookIndex(module.scriptName, 'discordReady');
+
+                    try {
+                        if (hookIndex !== -1 && $.discordAPI.isReady()) {
+                            $.bot.getHook(module.scriptName, 'discordReady').handler();
+                        }
 
                         say(channel, userPrefix(mention) + $.lang.get('discord.misc.module.enabled', module.getModuleName()));
                     } catch (ex) {
-                        $.log.error('[DISCORD] Unable to call initReady for enabled module (' + module.scriptName + '): ' + ex.message);
+                        $.log.error('[DISCORD] Unable to call discordReady for enabled module (' + module.scriptName + '): ' + ex.message);
                         $.consoleLn("Sending stack trace to error log...");
                         Packages.com.gmt2001.Console.err.printStackTrace(ex.javaException);
                     }
@@ -244,7 +316,7 @@
             /**
              * @discordcommandpath module disable [path] - Disables any modules in the bot, it should only be used to enable discord modules though.
              */
-            if (action.equalsIgnoreCase('disable')) {
+            if ($.equalsIgnoreCase(action, 'disable')) {
                 var module = $.bot.getModule(subAction);
 
                 if (module !== undefined) {
@@ -260,7 +332,7 @@
             /**
              * @discordcommandpath module list - Lists all of the discord modules.
              */
-            if (action.equalsIgnoreCase('list')) {
+            if ($.equalsIgnoreCase(action, 'list')) {
                 var keys = Object.keys($.bot.modules),
                     modules = $.bot.modules,
                     list = [],
@@ -278,7 +350,7 @@
         /**
          * @discordcommandpath setgame [game name] - Sets the bot game.
          */
-        if (command.equalsIgnoreCase('setgame')) {
+        if ($.equalsIgnoreCase(command, 'setgame')) {
             if (action === undefined) {
                 say(channel, userPrefix(mention) + $.lang.get('discord.misc.game.set.usage'));
                 return;
@@ -291,7 +363,7 @@
         /**
          * @discordcommandpath setstream [twitch url] [game name] - Sets the bot game and marks it as streaming.
          */
-        if (command.equalsIgnoreCase('setstream')) {
+        if ($.equalsIgnoreCase(command, 'setstream')) {
             if (action === undefined) {
                 say(channel, userPrefix(mention) + $.lang.get('discord.misc.game.stream.set.usage'));
                 return;
@@ -304,7 +376,7 @@
         /**
          * @discordcommandpath removegame - Removes the bot's game and streaming status if set.
          */
-        if (command.equalsIgnoreCase('removegame')) {
+        if ($.equalsIgnoreCase(command, 'removegame')) {
             removeGame();
             say(channel, userPrefix(mention) + $.lang.get('discord.misc.game.removed'));
         }
@@ -314,7 +386,7 @@
      * @event discordRoleCreated
      */
     $.bind('discordRoleCreated', function(event) {
-        var permObj = JSON.parse($.inidb.get('discordPermsObj', 'obj'));
+        var permObj = JSON.parse($.getIniDbString('discordPermsObj', 'obj'));
 
         permObj.roles.push({
             'name': event.getDiscordRole().getName() + '',
@@ -329,7 +401,7 @@
      * @event discordRoleUpdated
      */
     $.bind('discordRoleUpdated', function(event) {
-        var permObj = JSON.parse($.inidb.get('discordPermsObj', 'obj'));
+        var permObj = JSON.parse($.getIniDbString('discordPermsObj', 'obj'));
 
         for (var i = 0; i < permObj.roles.length; i++) {
             if (permObj.roles[i]._id.equals(event.getRoleID() + '')) {
@@ -345,7 +417,7 @@
      * @event discordRoleDeleted
      */
     $.bind('discordRoleDeleted', function(event) {
-        var permObj = JSON.parse($.inidb.get('discordPermsObj', 'obj'));
+        var permObj = JSON.parse($.getIniDbString('discordPermsObj', 'obj'));
         var commands = $.inidb.GetKeyList('discordPermcom', '');
 
         for (var i = 0; i < permObj.roles.length; i++) {
@@ -356,7 +428,7 @@
         }
 
         for (var i = 0; i < commands.length; i++) {
-            var perms = JSON.parse($.inidb.get('discordPermcom', commands[i]));
+            var perms = JSON.parse($.getIniDbString('discordPermcom', commands[i]));
 
             if (perms.roles.indexOf((event.getRoleID() + '')) > -1) {
                 perms.roles.splice(perms.roles.indexOf((event.getRoleID() + '')), 1);
@@ -376,7 +448,7 @@
         var reactionEvent = event.getEvent(),
                 reactionUser = event.getSenderId();
 
-        if (event.getReactionEmoji().asUnicodeEmoji().equals(Packages.discord4j.core.object.reaction.ReactionEmoji.unicode('❌'))) {
+        if (event.getReactionEmoji().asUnicodeEmoji().equals(Packages.discord4j.core.object.emoji.Emoji.unicode('❌'))) {
             var messageID = reactionEvent.getMessage().block().getId().asString(),
                     messageInArray = messageDeleteArray[messageID];
             if (messageInArray !== undefined) {
@@ -392,9 +464,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/core/misc.js', 'module', 1);
         $.discord.registerCommand('./discord/core/misc.js', 'setgame', 1);
         $.discord.registerCommand('./discord/core/misc.js', 'setstream', 1);
@@ -406,27 +478,26 @@
 
     /* Export the function to the $.discord api. */
     /* There are the same functions twice in here - that's normal and wanted. */
-    $.discord = {
-        isConnected: isConnected,
-        getUserMention: getUserMention,
-        userMention: getUserMention,
-        removeGame: removeGame,
-        userPrefix: userPrefix,
-        setStream: setStream,
-        setGame: setGame,
-        setRole: setRole,
-        say: say,
-        handleDeleteReaction: handleDeleteReaction,
-        sanitizeChannelName: sanitizeChannelName,
-        resolve: {
-            global: getUserMentionOrChannel,
-            getUserMentionOrChannel: getUserMentionOrChannel
-        },
-        username: {
-            resolve: getUserMention,
-            random: getRandomUser,
-            getUserMention: getUserMention,
-            getRandomUser: getRandomUser
-        }
+    $.discord.getUserById = getUserById;
+    $.discord.getUserMention = getUserMention;
+    $.discord.userMention = getUserMention;
+    $.discord.removeGame = removeGame;
+    $.discord.userPrefix = userPrefix;
+    $.discord.setStream = setStream;
+    $.discord.setGame = setGame;
+    $.discord.setRole = setRole;
+    $.discord.say = say;
+    $.discord.handleDeleteReaction = handleDeleteReaction;
+    $.discord.sanitizeChannelName = sanitizeChannelName;
+    $.discord.resolve = {
+        global: getUserMentionOrChannel,
+        getUserMentionOrChannel: getUserMentionOrChannel
     };
+    $.discord.username = {
+        resolve: getUserMention,
+        random: getRandomUser,
+        getUserMention: getUserMention,
+        getRandomUser: getRandomUser
+    };
+    $.paginateArrayDiscord = paginateArrayDiscord;
 })();

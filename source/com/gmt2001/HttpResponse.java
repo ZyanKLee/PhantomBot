@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,23 +16,27 @@
  */
 package com.gmt2001;
 
+import java.util.Map;
+
 import com.gmt2001.HttpRequest.RequestType;
-import java.util.HashMap;
+import com.gmt2001.httpclient.HttpClient;
 
 /**
- *
  * @author gmt2001
+ * @deprecated Please use {@link HttpClient} instead
  */
+@Deprecated(since = "3.6.0.0", forRemoval = true)
 public class HttpResponse {
 
     public RequestType type;
     public String url;
     public String post;
     public String content;
-    public HashMap<String, String> headers;
+    public Map<String, String> headers;
     public int httpCode;
     public boolean success;
     public String exception;
+    public Exception rawException;
 
     @Override
     public String toString() {

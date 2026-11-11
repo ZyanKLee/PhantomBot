@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,7 +30,7 @@
         var audioHookFiles = $.findFiles('./config/audio-hooks/', ''),
             audioHookNames = {},
             dbAudioHookNames,
-            reFileExt = new RegExp(/\.mp3$|\.ogg$|\.aac$/);
+            reFileExt = new RegExp(/\.[A-Za-z0-9]+$/);
 
         for (var i in audioHookFiles) {
             var fileName = audioHookFiles[i] + '';
@@ -40,10 +40,11 @@
         var keys = Object.keys(audioHookNames);
 
         for (var i in keys) {
-            if (!$.inidb.exists('audio_hooks', keys[i])) {
+            let hook = $.optIniDbString('audio_hooks', keys[i]);
+            if (!hook.isPresent()) {
                 $.inidb.set('audio_hooks', keys[i], audioHookNames[keys[i]]);
             } else {
-                var hook = $.inidb.get('audio_hooks', keys[i]);
+                hook = hook.get();
 
                 if (hook != null && hook.indexOf('.') === -1) {
                     $.inidb.set('audio_hooks', keys[i], audioHookNames[keys[i]]);
@@ -71,7 +72,7 @@
             i;
 
         for (i in keys) {
-            if (keys[i].equalsIgnoreCase(hook)) {
+            if ($.equalsIgnoreCase(keys[i], hook)) {
                 return true;
             }
         }
@@ -109,7 +110,7 @@
 
                 for (i in commands) {
                     if (!$.commandExists(commands[i])) {
-                        $.registerChatCommand('./systems/audioPanelSystem.js', commands[i], 7);
+                        $.registerChatCommand('./systems/audioPanelSystem.js', commands[i], $.PERMISSION.Viewer);
                     }
                 }
             }
@@ -127,7 +128,7 @@
 
             for (var i in files) {
                 var fileName = files[i].substring(0, files[i].indexOf('.'));
-                if (fileName.equalsIgnoreCase(audioHookName)) {
+                if ($.equalsIgnoreCase(fileName, audioHookName)) {
                     $.deleteFile('./config/audio-hooks/' + files[i], true);
                 }
             }
@@ -149,10 +150,10 @@
             actionArgs = args[3],
             audioHook = args[1],
             audioHookListStr,
-            isModv3 = $.isModv3(sender, event.getTags());
+            isModv3 = $.checkUserPermission(sender, event.getTags(), $.PERMISSION.Mod);
 
         /* Control Panel call to update the Audio Hooks DB. */
-        if (command.equalsIgnoreCase('reloadaudiopanelhooks')) {
+        if ($.equalsIgnoreCase(command, 'reloadaudiopanelhooks')) {
             if (!$.isBot(sender)) {
                 return;
             }
@@ -161,7 +162,7 @@
         }
 
         /* Control Panel remove audio hook */
-        if (command.equalsIgnoreCase('panelremoveaudiohook')) {
+        if ($.equalsIgnoreCase(command, 'panelremoveaudiohook')) {
             if (!$.isBot(sender)) {
                 return;
             }
@@ -170,7 +171,7 @@
         }
 
         /* Control Panel reload audio commands */
-        if (command.equalsIgnoreCase('panelloadaudiohookcmds')) {
+        if ($.equalsIgnoreCase(command, 'panelloadaudiohookcmds')) {
             if (!$.isBot(sender)) {
                 return;
             }
@@ -181,15 +182,20 @@
         /**
          * Checks if the command is an audio hook
          */
-        if ($.inidb.exists('audioCommands', command)) {
-            if ($.inidb.get('audioCommands', command).match(/\(list\)/g)) {
+        let hook = $.optIniDbString('audioCommands', command);
+        if (hook.isPresent()) {
+            if (hook.get().match(/\(list\)/g)) {
                 $.paginateArray(getAudioHookCommands(), 'audiohook.list', ', ', true, sender);
                 return;
             }
-            if (messageToggle) {
-                $.say($.whisperPrefix(sender) + $.lang.get('audiohook.play.success', $.inidb.get('audioCommands', command)));
+            if ($.alertPause.isPaused()) {
+                $.alertPause.returnCommandPrice(event);
+                return;
             }
-            $.alertspollssocket.triggerAudioPanel($.inidb.get('audioCommands', command));
+            if (messageToggle) {
+                $.say($.whisperPrefix(sender) + $.lang.get('audiohook.play.success', hook.get()));
+            }
+            $.alertspollssocket.triggerAudioPanel(hook.get());
             return;
         }
 
@@ -200,10 +206,11 @@
          * @commandpath audiohook togglemessages - Enables the success message once a sfx is sent.
          * @commandpath audiohook customcommand [add / remove] [command] [sound] - Adds a custom command that will trigger that sound. Use tag "(list)" to display all the commands.
          */
-        if (command.equalsIgnoreCase('audiohook')) {
+        if ($.equalsIgnoreCase(command, 'audiohook')) {
             var hookKeys = $.inidb.GetKeyList('audio_hooks', ''),
                 hookList = [],
-                idx;
+                idx,
+                isMod = $.checkUserPermission(sender, event.getTags(), $.PERMISSION.Mod);
 
             for (idx in hookKeys) {
                 hookList[hookKeys[idx]] = hookKeys[idx];
@@ -211,19 +218,30 @@
 
             if (subCommand === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('audiohook.usage'));
-                $.returnCommandCost(sender, command, $.isModv3(sender, event.getTags()));
+                $.returnCommandCost(sender, command, isMod);
                 return;
             }
 
-            if (subCommand.equalsIgnoreCase('play')) {
+            if ($.equalsIgnoreCase(subCommand, 'play')) {
                 if (audioHook === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('audiohook.play.usage'));
-                    $.returnCommandCost(sender, command, $.isModv3(sender, event.getTags()));
+                    $.returnCommandCost(sender, command, isMod);
                     return;
                 }
 
                 if (!audioHookExists(audioHook)) {
-                    $.returnCommandCost(sender, command, $.isModv3(sender, event.getTags()));
+                    if (audioHook.includes('.')) {
+                        audioHook = audioHook.substring(0, audioHook.lastIndexOf('.'));
+                    }
+                }
+
+                if (!audioHookExists(audioHook)) {
+                    $.returnCommandCost(sender, command, isMod);
+                    return;
+                }
+
+                if ($.alertPause.isPaused()) {
+                    $.alertPause.returnCommandPrice(event);
                     return;
                 }
 
@@ -245,7 +263,7 @@
                 $.alertspollssocket.triggerAudioPanel(audioHook);
             }
 
-            if (subCommand.equalsIgnoreCase('togglemessages')) {
+            if ($.equalsIgnoreCase(subCommand, 'togglemessages')) {
                 if (messageToggle) {
                     messageToggle = false;
                     $.inidb.set('settings', 'audiohookmessages', messageToggle);
@@ -257,7 +275,7 @@
                 return;
             }
 
-            if (subCommand.equalsIgnoreCase('list')) {
+            if ($.equalsIgnoreCase(subCommand, 'list')) {
                 if (args[1] === undefined) {
                     var totalPages = $.paginateArray(hookKeys, 'audiohook.list', ', ', true, sender, 1);
                     $.say($.whisperPrefix(sender) + $.lang.get('audiohook.list.total', totalPages));
@@ -270,13 +288,13 @@
                 return;
             }
 
-            if (subCommand.equalsIgnoreCase('customcommand')) {
+            if ($.equalsIgnoreCase(subCommand, 'customcommand')) {
                 if (action === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('audiohook.customcommand.usage'));
                     return;
                 }
 
-                if (action.equalsIgnoreCase('add')) {
+                if ($.equalsIgnoreCase(action, 'add')) {
                     if (subAction === undefined || actionArgs === undefined) {
                         $.say($.whisperPrefix(sender) + $.lang.get('audiohook.customcommand.add.usage'));
                         return;
@@ -289,11 +307,17 @@
                         return;
                     }
 
-                    if (actionArgs.equalsIgnoreCase('(list)')) {
+                    if ($.equalsIgnoreCase(actionArgs, '(list)')) {
                         $.say($.whisperPrefix(sender) + $.lang.get('audiohook.customcommand.add.list', subAction));
                         $.inidb.set('audioCommands', subAction.toLowerCase(), actionArgs);
-                        $.registerChatCommand('./systems/audioPanelSystem.js', subAction.toLowerCase(), 7);
+                        $.registerChatCommand('./systems/audioPanelSystem.js', subAction.toLowerCase(), $.PERMISSION.Viewer);
                         return;
+                    }
+
+                    if (!audioHookExists(actionArgs)) {
+                        if (actionArgs.includes('.')) {
+                            actionArgs = actionArgs.substring(0, actionArgs.lastIndexOf('.'));
+                        }
                     }
 
                     if (!audioHookExists(actionArgs)) {
@@ -302,12 +326,12 @@
                     }
 
                     $.inidb.set('audioCommands', subAction.toLowerCase(), actionArgs);
-                    $.registerChatCommand('./systems/audioPanelSystem.js', subAction.toLowerCase(), 7);
+                    $.registerChatCommand('./systems/audioPanelSystem.js', subAction.toLowerCase(), $.PERMISSION.Viewer);
                     $.say($.whisperPrefix(sender) + $.lang.get('audiohook.customcommand.add.success', subAction, actionArgs));
                     return;
                 }
 
-                if (action.equalsIgnoreCase('remove')) {
+                if ($.equalsIgnoreCase(action, 'remove')) {
                     if (subAction === undefined) {
                         $.say($.whisperPrefix(sender) + $.lang.get('audiohook.customcommand.remove.usage'));
                         return;
@@ -333,15 +357,15 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./systems/audioPanelSystem.js', 'reloadaudiopanelhooks', 30);
-        $.registerChatCommand('./systems/audioPanelSystem.js', 'panelremoveaudiohook', 30);
-        $.registerChatCommand('./systems/audioPanelSystem.js', 'panelloadaudiohookcmds', 30);
+        $.registerChatCommand('./systems/audioPanelSystem.js', 'reloadaudiopanelhooks', $.PERMISSION.Panel);
+        $.registerChatCommand('./systems/audioPanelSystem.js', 'panelremoveaudiohook', $.PERMISSION.Panel);
+        $.registerChatCommand('./systems/audioPanelSystem.js', 'panelloadaudiohookcmds', $.PERMISSION.Panel);
 
-        $.registerChatCommand('./systems/audioPanelSystem.js', 'audiohook', 1);
-        $.registerChatSubcommand('audiohook', 'play', 1);
-        $.registerChatSubcommand('audiohook', 'list', 1);
-        $.registerChatSubcommand('audiohook', 'togglemessages', 1);
-        $.registerChatSubcommand('audiohook', 'customcommand', 1);
+        $.registerChatCommand('./systems/audioPanelSystem.js', 'audiohook', $.PERMISSION.Admin);
+        $.registerChatSubcommand('audiohook', 'play', $.PERMISSION.Admin);
+        $.registerChatSubcommand('audiohook', 'list', $.PERMISSION.Admin);
+        $.registerChatSubcommand('audiohook', 'togglemessages', $.PERMISSION.Admin);
+        $.registerChatSubcommand('audiohook', 'customcommand', $.PERMISSION.Admin);
 
         loadAudioHookCommands();
         updateAudioHookDB();

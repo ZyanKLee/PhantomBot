@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,54 +16,84 @@
  */
 package tv.phantombot.event.irc.channel;
 
+import java.util.Collections;
+import java.util.List;
+
+import com.gmt2001.twitch.cache.Viewer;
 import tv.phantombot.twitch.irc.TwitchSession;
 
+/**
+ * The list of users present in TMI is updated
+ * @author gmt2001
+ */
 public class IrcChannelUsersUpdateEvent extends IrcChannelEvent {
-    private final String[] joins;
-    private final String[] parts;
+    private final List<Viewer> chatters;
 
     /**
-     * Class constructor.
+     * Constructor
      *
-     * @param {TwitchSession}  session
-     * @param {String[]} joins
-     * @param {String[]} parts
+     * @param chatters A list of login names for users who are currently in chat
      */
-    public IrcChannelUsersUpdateEvent(TwitchSession session, String[] joins, String[] parts) {
-        super(session);
-
-        this.joins = joins;
-        this.parts = parts;
+    public IrcChannelUsersUpdateEvent(List<Viewer> chatters) {
+        super(null);
+        this.chatters = Collections.unmodifiableList(chatters);
     }
 
     /**
      * Class constructor.
      *
-     * @param {String[]} joins
-     * @param {String[]} parts
+     * @param session
+     * @param joins
+     * @param parts
+     * @deprecated Joins/Parts are not calculated anymore
      */
+    @Deprecated(since = "3.8.0.0", forRemoval = true)
+    public IrcChannelUsersUpdateEvent(TwitchSession session, String[] joins, String[] parts) {
+        super(session);
+        this.chatters = null;
+    }
+
+    /**
+     * Class constructor.
+     *
+     * @param joins
+     * @param parts
+     * @deprecated Joins/Parts are not calculated anymore
+     */
+    @Deprecated(since = "3.8.0.0", forRemoval = true)
     public IrcChannelUsersUpdateEvent(String[] joins, String[] parts) {
         super(null);
-
-        this.joins = joins;
-        this.parts = parts;
+        this.chatters = null;
     }
 
     /**
      * Method that returns the current array of users who joined the channel in the last 10 minutes.
      *
-     * @return {String[]} joins
+     * @return joins
+     * @deprecated Joins/Parts are not calculated anymore
      */
+    @Deprecated(since = "3.8.0.0", forRemoval = true)
     public String[] getJoins() {
-        return this.joins;
+        return new String[0];
     }
 
     /**
      * Method that returns the current array of users who left the channel in the last 10 minutes.
      *
-     * @return {String[]} parts
+     * @return parts
+     * @deprecated Joins/Parts are not calculated anymore
      */
+    @Deprecated(since = "3.8.0.0", forRemoval = true)
     public String[] getParts() {
-        return this.parts;
+        return new String[0];
+    }
+
+    /**
+     * A list of login names for users who are currently in chat
+     *
+     * @return A list of login names for users who are currently in chat
+     */
+    public List<Viewer> chatters() {
+        return this.chatters;
     }
 }

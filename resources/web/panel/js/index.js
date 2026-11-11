@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+/* global Pace, toastr */
 
 // Main socket and functions.
 $(function () {
@@ -48,6 +50,8 @@ $(function () {
      */
     var sendToSocket = function (message) {
         try {
+            const cp = $.currentPage();
+            message.section = (cp && cp.panelSection) ? cp.panelSection : (cp ? cp.folder : '');
             let json = JSON.stringify(message);
 
             webSocket.send(json);
@@ -188,14 +192,18 @@ $(function () {
      * @param {Array}    args
      * @param {Function} callback
      */
-    socket.wsEvent = function (callback_id, script, argsString, args, callback) {
+    socket.wsEvent = function (callback_id, script, argsString, args, callback, requiresReply, makeUnique) {
+        if (makeUnique === true) {
+            callback_id = callback_id + '_' + helpers.getRandomString(4);
+        }
         // Genetate a callback.
-        generateCallBack(callback_id, [], true, false, callback);
+        generateCallBack(callback_id, [], requiresReply !== true, true, callback);
 
         // Send event.
         sendToSocket({
             socket_event: callback_id,
             script: script,
+            requiresReply: requiresReply,
             args: {
                 arguments: String(argsString),
                 args: args
@@ -203,9 +211,18 @@ $(function () {
         });
     };
 
+    socket.consoleCommand = function (callback_id, command, callback) {
+        generateCallBack(callback_id, [], false, true, callback);
+
+        sendToSocket({
+            console_command: callback_id,
+            message: command
+        });
+    }
+
     socket.getDiscordChannelList = function (callback_id, callback) {
         // Genetate a callback.
-        socket.addListener(callback_id, callback);
+        generateCallBack(callback_id, [], false, true, callback);
 
         // Send event.
         sendToSocket({
@@ -468,6 +485,189 @@ $(function () {
     };
 
     /*
+     * @function Gets all panel users
+     *
+     * @param {String}       callback_id
+     * @param {Function}     callback
+     */
+    socket.getAllPanelUsers = function (callback_id, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUser: callback_id,
+            getAll: true
+        });
+    };
+
+    /*
+     * @function Gets specific panel user
+     *
+     * @param {String}       callback_id
+     * @param {String}       username
+     * @param {Function}     callback
+     */
+    socket.getPanelUser = function (callback_id, username, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUserRO: callback_id,
+            get: String(username)
+        });
+    };
+
+    /*
+     * @function Adds a panel User
+     *
+     * @param {String}       callback_id
+     * @param {String}       username
+     * @param {String}       permission
+     * @param {Boolean}      enabled
+     * @param {Function}     callback
+     */
+    socket.addPanelUser = function (callback_id, username, permission, enabled, canRestartBot, canManageUsers, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUser: callback_id,
+            add: {
+                username: String(username),
+                permission: String(permission),
+                enabled: enabled,
+                canRestartBot: canRestartBot,
+                canManageUsers: canManageUsers
+            }
+        });
+    };
+
+    /*
+     * @function Deletes a panel User
+     *
+     * @param {String}       callback_id
+     * @param {String}       username
+     * @param {Function}     callback
+     */
+    socket.deletePanelUser = function (callback_id, username, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUser: callback_id,
+            delete: String(username)
+        });
+    };
+
+    /*
+     * @function Edits a panel user
+     *
+     * @param {String}       callback_id
+     * @param {String}       currentUsername
+     * @param {String}       newUsername
+     * @param {String}       permission
+     * @param {Boolean}      enabled
+     * @param {Function}     callback
+     */
+    socket.editPanelUser = function (callback_id, currentUsername, newUsername, permission, enabled, canRestartBot, canManageUsers, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUser: callback_id,
+            edit: {
+                currentUsername: String(currentUsername),
+                newUsername: String(newUsername),
+                permission: String(permission),
+                enabled: enabled,
+                canRestartBot: canRestartBot,
+                canManageUsers: canManageUsers
+            }
+        });
+    };
+
+    /*
+     * @function Changes a panel user's password
+     *
+     * @param {String}       callback_id
+     * @param {String}       username
+     * @param {String}       currentPassword
+     * @param {String}       newPassword
+     * @param {Function}     callback
+     */
+    socket.changePanelUserPWD = function (callback_id, username, currentPassword, newPassword, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUserRO: callback_id,
+            changePassword: {
+                username: String(username),
+                currentPassword: String(CryptoJS.SHA256(currentPassword).toString()),
+                newPassword: String(CryptoJS.SHA256(newPassword).toString())
+            }
+        });
+    };
+
+    /*
+     * @function Resets a panel user's password
+     *
+     * @param {String}       callback_id
+     * @param {String}       username
+     * @param {Function}     callback
+     */
+    socket.resetPanelUserPWD = function (callback_id, username, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUser: callback_id,
+            resetPassword: String(username)
+        });
+    };
+
+    /*
+     * @function Gets all panel permission level
+     *
+     * @param {String}       callback_id
+     * @param {Function}     callback
+     */
+    socket.getPanelPermissionLevels = function (callback_id, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUserRO: callback_id,
+            permission: true
+        });
+    };
+
+    /*
+     * @function Gets all panel sections to which permissions can be assigned
+     *
+     * @param {String}       callback_id
+     * @param {Function}     callback
+     */
+    socket.getPanelSections = function (callback_id, callback) {
+        // Genetate a callback.
+        generateCallBack(callback_id, [], false, true, callback);
+
+        // Query database.
+        sendToSocket({
+            panelUserRO: callback_id,
+            sections: true
+        });
+    };
+
+    /*
      * @function Sends a remote panel query.
      *
      * @param {String}   query_id
@@ -475,7 +675,7 @@ $(function () {
      * @param {Object}   params
      * @param {Function} callback
      */
-    socket.doRemote = function (query_id, query, params, callback) {
+    socket.doRemote = function (query_id, query, params, callback, isArray) {
         generateCallBack(query_id, [], false, true, callback);
 
         sendToSocket({
@@ -484,6 +684,58 @@ $(function () {
             query: query,
             params: params
         });
+    };
+
+    /*
+     * Sends a query requiring a reply
+     * @param {String} type The message type
+     * @param {String} query_id The unique Query ID
+     * @param {Object} params Optional object of params to send
+     * @param {Function} callback Callback function
+     * @returns {undefined}
+     */
+    socket.query = function (type, query_id, params, callback, makeUnique) {
+        if (makeUnique === true) {
+            query_id = query_id + '_' + helpers.getRandomString(4);
+        }
+        generateCallBack(query_id, [], false, true, callback);
+
+        let param = {};
+        param[type] = query_id;
+
+        if (params !== undefined && params !== null) {
+            for (let x in params) {
+                param[x] = params[x];
+            }
+        }
+
+        sendToSocket(param);
+    };
+
+    /*
+     * Sends a query not requiring a reply
+     * @param {String} type The message type
+     * @param {String} query_id The unique Query ID
+     * @param {Object} params Optional object of params to send
+     * @param {Function} callback Callback function
+     * @returns {undefined}
+     */
+    socket.update = function (type, query_id, params, callback, makeUnique) {
+        if (makeUnique === true) {
+            query_id = query_id + '_' + helpers.getRandomString(4);
+        }
+        generateCallBack(query_id, [], true, true, callback);
+
+        let param = {};
+        param[type] = query_id;
+
+        if (params !== undefined && params !== null) {
+            for (let x in params) {
+                param[x] = params[x];
+            }
+        }
+
+        sendToSocket(param);
     };
 
     socket.close = function () {
@@ -514,6 +766,7 @@ $(function () {
         helpers.logError('Connection lost with the websocket.', helpers.LOG_TYPE.FORCE);
         // Add error toast.
         toastr.error('Connection lost with the websocket.', '', {timeOut: 0});
+        window.updateCookie();
     };
 
     /*
@@ -524,6 +777,7 @@ $(function () {
             helpers.log('Message from socket: ' + e.data, helpers.LOG_TYPE.DEBUG);
 
             if (e.data === 'PING') {
+                helpers.log('Sending PONG', helpers.LOG_TYPE.DEBUG);
                 webSocket.send('PONG');
                 return;
             }
@@ -533,14 +787,18 @@ $(function () {
             // Check this message here before doing anything else.
             if (message.authresult !== undefined) {
                 if (message.authresult === 'false') {
+                    if (helpers.leaveEndedPasskeySession()) {
+                        return;
+                    }
+
                     helpers.logError('Failed to auth with the socket.', helpers.LOG_TYPE.FORCE);
                     toastr.error('Failed to auth with the socket.', '', {timeOut: 0});
+                    webSocket.close();
                 } else {
                     // This is to stop a reconnect loading the main page.
                     if (helpers.isAuth === true) {
+                        helpers.log('Found reconnect auth', helpers.LOG_TYPE.DEBUG);
                         return;
-                    } else {
-                        helpers.isAuth = true;
                     }
 
                     sendToSocket({
@@ -548,38 +806,71 @@ $(function () {
                         id: 'initLoad.panelSettings',
                         query: 'panelSettings'
                     });
+                    helpers.log('Auth success', helpers.LOG_TYPE.DEBUG);
                 }
                 return;
             }
 
             if (message.id !== undefined) {
                 if (message.id === 'initLoad.panelSettings') {
-                    window.panelSettings.channelName = message.channelName;
-                    window.panelSettings.displayName = message.displayName;
-                    $.loadPage('dashboard', 'dashboard.html');
-                    helpers.getUserLogo();
+                    if (message.error !== undefined && message.error !== null) {
+                        toastr.error(message.error, '', {timeOut: 0, extendedTimeOut: 0, tapToDismiss: false});
+                    } else {
+                        helpers.isAuth = true;
+                        window.panelSettings.channelName = message.channelName;
+                        window.panelSettings.botName = message.botName;
+                        window.panelSettings.displayName = message.displayName;
+                        helpers.loadCurrentUserInfo();
+                        $.loadPage('dashboard', 'dashboard.html');
+                        if (typeof window.initCustomPanelNav === 'function') {
+                            window.initCustomPanelNav();
+                        }
+                        helpers.getUserLogo();
+                    }
                 }
             }
 
             // Make sure this isn't a version request.
             if (message.versionresult !== undefined) {
+                helpers.log('Got version result...', helpers.LOG_TYPE.DEBUG);
                 // Call the callback.
                 callbacks[message.versionresult].func(message);
                 // Delete the callback.
                 delete callbacks[message.versionresult];
+                helpers.log('Callback complete', helpers.LOG_TYPE.DEBUG);
             } else {
-
+                helpers.log('Looking for callbacks and listeners for ' + message.query_id + '...', helpers.LOG_TYPE.DEBUG);
                 // Handle callbacks.
                 let callback = callbacks[message.query_id],
                         listener = listeners[message.query_id];
 
                 if (callback !== undefined) {
+                    helpers.log('Found callback...', helpers.LOG_TYPE.DEBUG);
                     // Add our data to the callback array.
                     if (!callback.isUpdate) {
                         if (callback.isArray) {
                             callback.queryData = message.results;
                         } else if (callback.storeKey === true) {
-                            callback.queryData[Object.keys(message.results)[1]] = message.results.value;
+                            // Had to change from object position via `Object.keys()[1]` to explicitly finding the
+                            // key by name: key order is not guaranteed. Custom modules relied on key order and
+                            // broke when it changed.
+                            const res = message.results;
+                            const dbKeys = Object.keys(res);
+                            let dbKey = null;
+                            let di;
+                            for (di = 0; di < dbKeys.length; di++) {
+                                const dk = dbKeys[di];
+                                if (dk !== 'table' && dk !== 'value') {
+                                    dbKey = dk;
+                                    break;
+                                }
+                            }
+                            if (dbKey === null && dbKeys.length > 1) {
+                                dbKey = dbKeys[1];
+                            }
+                            if (dbKey !== null) {
+                                callback.queryData[dbKey] = res.value;
+                            }
                         } else {
                             callback.queryData[message.results.table] = message.results.value;
                         }
@@ -587,6 +878,7 @@ $(function () {
 
                     // If we got all the data, run the callback.
                     if (--callback.await === 0) {
+                        helpers.log('Running callback...', helpers.LOG_TYPE.DEBUG);
                         // Run the function and send the query data with it.
                         callback.func(callback.queryData);
                         // Log this.
@@ -602,7 +894,7 @@ $(function () {
 
                         if (message.query_id.indexOf('module_toggle') !== -1 || message.query_id.indexOf('module_status') !== -1
                                 || message.query_id.endsWith('module')) {
-                            if (message.results !== undefined && message.results.value == 'false') {
+                            if (message.results !== undefined && message.results.value === 'false') {
                                 $('.load-ajax').remove();
                             }
                         }
@@ -610,8 +902,10 @@ $(function () {
                         helpers.log('Awaiting for data (' + callback.await + ' left) before calling callback with id: ' + message.query_id, helpers.LOG_TYPE.DEBUG);
                     }
                 } else if (listener !== undefined) {
+                    helpers.log('Found listener...', helpers.LOG_TYPE.DEBUG);
                     // Call the listener.
                     listener(message.results);
+                    helpers.log('Listener complete', helpers.LOG_TYPE.DEBUG);
                 }
             }
         } catch (ex) {

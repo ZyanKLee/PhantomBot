@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,7 +15,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-$(function() {
+/* global Pace */
+
+$(function () {
+    let currentPageInfo = {
+        folder: '',
+        page: '',
+        href: '',
+        panelSection: ''
+    };
     /*
      * @function removes the page loader.
      */
@@ -24,15 +32,16 @@ $(function() {
         if ($('.loader').length > 0) {
             // Stop pace since we already have one loader.
             Pace.stop();
-            $('.loader').fadeOut(3e2, function() {
+            $('.loader').fadeOut(3e2, function () {
                 $('.loader').remove();
             });
 
-            $('.main').fadeIn(2e2, function() {
+            $('.main').fadeIn(2e2, function () {
                 // Fix the window height.
                 $.fn.layout.Constuctor.prototype.fix();
             });
 
+            window.updateCookie();
             // Add the load for the master script.
             $('body').append($('<script>', {
                 'async': true,
@@ -48,7 +57,7 @@ $(function() {
      * @param {String} folder
      * @param {String} page
      */
-    function loadPage(folder, page, href) {
+    function loadPage(folder, page, href, panelSection) {
         // Make sure the href isn't blank, then load the page.
         if (page !== '') {
             helpers.log('Starting ajax request for page: ' + folder + '/' + page, helpers.LOG_TYPE.DEBUG);
@@ -64,12 +73,24 @@ $(function() {
             // Remove all temp global functions.
             helpers.temp = {};
 
+            window.updateCookie();
+            // Keep the request, so the address the bot answered from can be read after a redirect.
+            const request = $.ajaxSettings.xhr();
             // Load the page.
             $.ajax({
                 cache: false,
                 dataType: 'html',
                 url: 'pages/' + folder + '/' + page,
-                success: function(data) {
+                xhr: function () {
+                    return request;
+                },
+                success: function (data) {
+                    // The bot answers with the login page once a passkey session has ended.
+                    if (helpers.isPasskeySession() && new URL(request.responseURL, window.location.href).pathname.indexOf(window.location.pathname + 'login/') === 0) {
+                        helpers.leaveEndedPasskeySession();
+                        return;
+                    }
+
                     // Set the new page.
                     $('#page-content').html(data);
                     // Scroll to top.
@@ -79,22 +100,34 @@ $(function() {
                         $.fn.dinamicMenu(href);
                     }
                     helpers.log('Completed ajax request for page: ' + folder + '/' + page, helpers.LOG_TYPE.DEBUG);
+                    currentPageInfo = {
+                        folder: folder,
+                        page: page,
+                        href: href === undefined ? '' : href,
+                        panelSection: panelSection || ''
+                    };
                 },
-                error: function(err) {
+                error: function (err) {
                     helpers.logError('Failed to load page (' + page + ') => ' + err.statusText, helpers.LOG_TYPE.FORCE);
                 }
             });
         }
     }
 
-    // Handles loading of tabs.
-    $('[data-folder]').on('click', function(e) {
+    function currentPage() {
+        return currentPageInfo;
+    }
+
+    // Delegated so manifest-injected nav links work. data-page = filename; data-panel-section = Panel Users section.
+    $(document).on('click', '[data-folder]', function (e) {
         e.preventDefault();
-        // Load the page.
-        loadPage($(this).data('folder'), $(this).attr('href').substring(1), this.href);
+        const $link = $(this);
+        const page = $link.data('page') || String($link.attr('href') || '').substring(1);
+        loadPage($link.data('folder'), page, this.href, $link.data('panelSection'));
     });
 
     // Export to API.
     $.showPage = showPage;
     $.loadPage = loadPage;
+    $.currentPage = currentPage;
 });

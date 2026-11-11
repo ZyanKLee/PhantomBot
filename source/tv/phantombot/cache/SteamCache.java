@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,32 +19,35 @@ package tv.phantombot.cache;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import com.gmt2001.util.concurrent.ExecutorService;
+
 import tv.phantombot.PhantomBot;
 
-public class SteamCache implements Runnable {
+public class SteamCache {
 
+    private static final long INTERVAL_MINUTES = 30;
     private static final Map<String, SteamCache> instances = new HashMap<>();
-    private final Thread runThread;
+    private final ScheduledFuture<?> update;
 
     /**
      * Class constructor.
      */
-    @SuppressWarnings("CallToThreadStartDuringObjectConstruction")
     private SteamCache() {
-        // Create a new thread for the cache.
-        this.runThread = new Thread(this, "tv.phantombot.cache.SteamCache");
-        // Set our Exception handler.
-        this.runThread.setUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
-        // Start the thread.
-        this.runThread.start();
+       this.update = ExecutorService.scheduleAtFixedRate(() -> {
+            this.run();
+        }, 0, INTERVAL_MINUTES, TimeUnit.MINUTES);
     }
 
     /**
      * Method that returns this instance.
      *
-     * @param {String} channelName
+     * @param channelName
      * @return
      */
     public static SteamCache instance(String channelName) {
@@ -61,24 +64,13 @@ public class SteamCache implements Runnable {
     /**
      * Run method that runs on a new thread and sleeps every 30 minutes.
      */
-    @Override
-    @SuppressWarnings("SleepWhileInLoop")
-    public void run() {
-        while (!runThread.isInterrupted()) {
-            try {
-                // Update.
-                updateCache();
-            } catch (Exception ex) {
-                com.gmt2001.Console.err.println("SteamCache.run::Failed to update cache "
-                        + "[" + ex.getClass().getSimpleName() + "]: " + ex.getMessage());
-            }
-            // Sleep for 30 minutes.
-            try {
-                Thread.sleep(30 * 60 * 1000);
-            } catch (InterruptedException ex) {
-                com.gmt2001.Console.debug.println("SteamCache.run::Failed to sleep [InterruptedException]: "
-                        + ex.getMessage());
-            }
+    private void run() {
+        try {
+            // Update.
+            updateCache();
+        } catch (Exception ex) {
+            com.gmt2001.Console.err.println("SteamCache.run::Failed to update cache "
+                    + "[" + ex.getClass().getSimpleName() + "]: " + ex.getMessage());
         }
     }
 
@@ -127,7 +119,7 @@ public class SteamCache implements Runnable {
     /**
      * Method that returns the game ID, or null if it doesn't exist.
      *
-     * @param {String} gameName
+     * @param gameName
      * @return
      */
     public String getGameID(String gameName) {
@@ -138,6 +130,6 @@ public class SteamCache implements Runnable {
      * Method that kills the run thread.
      */
     public void kill() {
-        runThread.interrupt();
+        this.update.cancel(false);
     }
 }

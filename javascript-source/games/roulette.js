@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,13 +24,14 @@
     var timeoutTime = $.getSetIniDbNumber('roulette', 'timeoutTime', 60),
         responseCounts = {
             win: 0,
-            lost: 0,
+            lost: 0
         },
-        lastRandom = 0;
+        lastRandom = 0,
+        _lock = new Packages.java.util.concurrent.locks.ReentrantLock();
 
     function reloadRoulette() {
         timeoutTime = $.getIniDbNumber('roulette', 'timeoutTime');
-    };
+    }
 
     /**
      * @function loadResponses
@@ -47,15 +48,15 @@
         }
 
         $.consoleDebug($.lang.get('roulette.console.loaded', responseCounts.win, responseCounts.lost));
-    };
+    }
 
     /**
      * @function timeoutUser
      * @param {string} username
      */
     function timeoutUserR(username) {
-        $.session.say('.timeout ' + username + ' ' + timeoutTime);
-    };
+        Packages.tv.phantombot.PhantomBot.instance().getSession().say('.timeout ' + username + ' ' + timeoutTime);
+    }
 
     /**
      * @event command
@@ -71,21 +72,37 @@
         /**
          * @commandpath roulette - Pull the trigger and find out if there's a bullet in the chamber
          */
-        if (command.equalsIgnoreCase('roulette')) {
+        if ($.equalsIgnoreCase(command, 'roulette')) {
             d1 = $.randRange(1, 2);
             d2 = $.randRange(1, 2);
 
-            if (d1 == d2) {
+            if (d1 === d2) {
                 do {
                     random = $.randRange(1, responseCounts.win);
-                } while (random == lastRandom);
+                } while (random === lastRandom);
+
+                _lock.lock();
+                try {
+                    lastRandom = random;
+                } finally {
+                    _lock.unlock();
+                }
+
                 $.say($.lang.get('roulette.win.' + random, $.resolveRank(sender)));
             } else {
                 do {
                     random = $.randRange(1, responseCounts.lost);
-                } while (random == lastRandom);
+                } while (random === lastRandom);
+
+                _lock.lock();
+                try {
+                    lastRandom = random;
+                } finally {
+                    _lock.unlock();
+                }
+
                 $.say($.lang.get('roulette.lost.' + random, $.resolveRank(sender)));
-                if (!$.isModv3(sender, event.getTags())) {
+                if (!$.checkUserPermission(sender, event.getTags(), $.PERMISSION.Mod)) {
                     if ($.getBotWhisperMode()) {
                         $.say($.whisperPrefix(sender) + $.lang.get('roulette.timeout.notifyuser', timeoutTime));
                     }
@@ -97,8 +114,8 @@
         /**
          * @commandpath roulettetimeouttime [seconds] - Sets for how long the user gets timed out for when loosing at roulette
          */
-        if (command.equalsIgnoreCase('roulettetimeouttime')) {
-            if (!$.isAdmin(sender)) {
+        if ($.equalsIgnoreCase(command, 'roulettetimeouttime')) {
+            if (!$.checkUserPermission(sender, event.getTags(), $.PERMISSION.Admin)) {
                 $.say($.whisperPrefix(sender) + $.adminMsg);
                 return;
             }
@@ -118,12 +135,9 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        if (responseCounts.win == 0 && responseCounts.lost == 0) {
-            loadResponses();
-        }
-
-        $.registerChatCommand('./games/roulette.js', 'roulette', 7);
-        $.registerChatCommand('./games/roulette.js', 'roulettetimeouttime', 1);
+        loadResponses();
+        $.registerChatCommand('./games/roulette.js', 'roulette', $.PERMISSION.Viewer);
+        $.registerChatCommand('./games/roulette.js', 'roulettetimeouttime', $.PERMISSION.Admin);
     });
 
     $.reloadRoulette = reloadRoulette;

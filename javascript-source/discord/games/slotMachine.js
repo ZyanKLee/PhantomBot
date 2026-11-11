@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -101,7 +101,7 @@
         /**
          * @discordcommandpath slot - Play the slot machines for some points.
          */
-        if (command.equalsIgnoreCase('slot')) {
+        if ($.equalsIgnoreCase(command, 'slot')) {
             if (action === undefined) {
                 var twitchName = $.discord.resolveTwitchName(event.getSenderId());
                 if (twitchName !== null) {
@@ -113,7 +113,7 @@
                 /**
                  * @discordcommandpath slot rewards [rewards] - Sets the rewards for the slot machine
                  */
-                if (action.equalsIgnoreCase('rewards')) {
+                if ($.equalsIgnoreCase(action, 'rewards')) {
                     if (args.length === 6 && !isNaN(parseInt(args[1])) && !isNaN(parseInt(args[2])) && !isNaN(parseInt(args[3])) && !isNaN(parseInt(args[4])) && !isNaN(parseInt(args[5]))) {
                         $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.slotmachine.rewards.success'));
                         $.inidb.set('discordSlotMachineReward', 'reward_0', args[1]);
@@ -131,9 +131,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/games/slotMachine.js', 'slot', 0);
         $.discord.registerSubCommand('slot', 'rewards', 1);
 
@@ -145,7 +145,7 @@
      * @event webPanelSocketUpdate
      */
     $.bind('webPanelSocketUpdate', function(event) {
-        if (event.getScript().equalsIgnoreCase('./discord/games/slotMachine.js')) {
+        if ($.equalsIgnoreCase(event.getScript(), './discord/games/slotMachine.js')) {
             loadRewards();
             loadEmojis();
         }

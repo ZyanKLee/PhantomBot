@@ -1,7 +1,7 @@
 /* astyle --style=java --indent=spaces=4 --mode=java */
 
  /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,17 +18,26 @@
  */
 package tv.phantombot.cache;
 
-import com.illusionaryone.TwitchAlertsAPIv1;
-import java.util.Calendar;
-import java.util.Date;
+import java.net.URISyntaxException;
+import java.util.Collections;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import com.gmt2001.util.concurrent.ExecutorService;
+import com.illusionaryone.StreamLabsAPI;
+
+import net.engio.mbassy.listener.Handler;
 import tv.phantombot.PhantomBot;
 import tv.phantombot.event.EventBus;
+import tv.phantombot.event.Listener;
 import tv.phantombot.event.streamlabs.donate.StreamLabsDonationEvent;
 import tv.phantombot.event.streamlabs.donate.StreamLabsDonationInitializedEvent;
+import tv.phantombot.event.webpanel.websocket.WebPanelSocketUpdateEvent;
 
-public class DonationsCache implements Runnable {
+public class DonationsCache implements Listener {
 
     private static final DonationsCache INSTANCE = new DonationsCache();
 
@@ -36,127 +45,86 @@ public class DonationsCache implements Runnable {
         return INSTANCE;
     }
 
-    private final Thread updateThread;
+    private ScheduledFuture<?> updateFuture = null;
     private boolean firstUpdate = true;
-    private Date timeoutExpire = new Date();
-    private Date lastFail = new Date();
-    private int numfail = 0;
-    private boolean killed = false;
+    private int lastId = PhantomBot.instance().getDataStore().GetInteger("settings", "", "DonationsCache_lastId");
+    private long lastTimestamp = 0;
 
-    @SuppressWarnings("CallToThreadStartDuringObjectConstruction")
     private DonationsCache() {
-        this.updateThread = new Thread(this, "tv.phantombot.cache.DonationsCache");
-
-        Thread.setDefaultUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
-        this.updateThread.setUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
+        this.updateFuture = ExecutorService.scheduleAtFixedRate(this::run, 20, 30, TimeUnit.SECONDS);
+        ExecutorService.execute(() -> EventBus.instance().register(this));
     }
 
-    private void checkLastFail() {
-        Calendar cal = Calendar.getInstance();
-        this.numfail = (this.lastFail.after(new Date()) ? this.numfail + 1 : 1);
-
-        cal.add(Calendar.MINUTE, 1);
-        this.lastFail = cal.getTime();
-
-        if (this.numfail > 5) {
-            this.timeoutExpire = cal.getTime();
-        }
-    }
-
-    public void start() {
-        this.updateThread.start();
-    }
-
-    @Override
-    @SuppressWarnings("SleepWhileInLoop")
-    public void run() {
+    private void run() {
         try {
-            Thread.sleep(20 * 1000);
-        } catch (InterruptedException ex) {
-            com.gmt2001.Console.debug.println("DonationsCache.run: Failed to execute initial sleep [InterruptedException]: " + ex.getMessage());
-        }
-
-        while (!this.killed) {
-            try {
-                try {
-                    if (new Date().after(this.timeoutExpire)) {
-                        this.updateCache();
-                    }
-                } catch (Exception ex) {
-                    checkLastFail();
-                    com.gmt2001.Console.debug.println("DonationsCache.run: Failed to update donations: " + ex.getMessage());
-                }
-            } catch (Exception ex) {
-                com.gmt2001.Console.err.println("DonationsCache.run: Failed to update donations: " + ex.getMessage());
+            if (StreamLabsAPI.hasAccessToken()) {
+                this.updateCache();
             }
-
-            try {
-                Thread.sleep(30 * 1000);
-            } catch (InterruptedException ex) {
-                com.gmt2001.Console.debug.println("DonationsCache.run: Failed to execute sleep [InterruptedException]: " + ex.getMessage());
-            }
+        } catch (Exception ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
         }
     }
 
     private void updateCache() throws Exception {
-        JSONObject jsonResult;
+        JSONObject jsonResult = StreamLabsAPI.instance().GetDonations(this.lastId);
         JSONArray donations = null;
-        int lastId = PhantomBot.instance().getDataStore().GetInteger("settings", "", "DonationsCache_lastId");
+        boolean hasChanged = false;
 
         com.gmt2001.Console.debug.println("DonationsCache::updateCache");
-
-        jsonResult = TwitchAlertsAPIv1.instance().GetDonations(lastId);
 
         if (jsonResult.getBoolean("_success")) {
             if (jsonResult.getInt("_http") == 200) {
                 donations = jsonResult.getJSONArray("data");
-            } else {
-                try {
-                    throw new Exception("[HTTPErrorExecption] HTTP " + " " + jsonResult.getInt("_http") + ". req="
-                            + jsonResult.getString("_type") + " " + jsonResult.getString("_url") + "   "
-                            + (jsonResult.has("message") && !jsonResult.isNull("message") ? "message="
-                            + jsonResult.getString("message") : "content=" + jsonResult.getString("_content")));
-                } catch (Exception ex) {
-                    /* Kill this cache if the streamlabs token is bad and disable the module. */
-                    if (ex.getMessage().contains("message=Unauthorized")) {
-                        com.gmt2001.Console.err.println("DonationsCache.updateCache: Bad API key disabling the StreamLabs module.");
-                        PhantomBot.instance().getDataStore().SetString("modules", "", "./handlers/donationHandler.js", "false");
-                    } else {
-                        com.gmt2001.Console.err.println("Donations.updateCache: Failed to update donations: " + ex.getMessage());
-                    }
-                    this.kill();
-                }
-            }
-        } else {
-            try {
-                throw new Exception("[" + jsonResult.getString("_exception") + "] " + jsonResult.getString("_exceptionMessage"));
-            } catch (Exception ex) {
-                if (ex.getMessage().startsWith("[SocketTimeoutException]") || ex.getMessage().startsWith("[IOException]")) {
-                    checkLastFail();
-                    com.gmt2001.Console.warn.println("DonationsCache.run: Failed to update donations: " + ex.getMessage());
-                }
+            } else if (jsonResult.optString("message", "").contains("Unauthorized")) {
+                com.gmt2001.Console.err.println("DonationsCache.updateCache: Bad API key for StreamLabs.");
+                return;
             }
         }
 
-        if (donations != null && !this.killed) {
+        if (donations != null) {
             for (int i = 0; i < donations.length(); i++) {
                 int donationId = Integer.parseInt(donations.getJSONObject(i).get("donation_id").toString());
-                if (donationId > lastId) {
-                    lastId = donationId;
-                    EventBus.instance().post(new StreamLabsDonationEvent(donations.getJSONObject(i)));
+                long donationTimestamp = Long.parseLong(donations.getJSONObject(i).get("created_at").toString());
+
+                if (donationTimestamp > this.lastTimestamp //most recent
+                    || (donationTimestamp == this.lastTimestamp && donationId > this.lastId)) { //unix epoch in seconds, could have multiple donations with same timestamp, use highest ID
+                    this.lastId = donationId;
+                    this.lastTimestamp = donationTimestamp;
+                    hasChanged = true;
+                }
+
+                if (!PhantomBot.instance().getDataStore().exists("donations", String.valueOf(donationId))) {
+                    EventBus.instance().postAsync(new StreamLabsDonationEvent(donations.getJSONObject(i)));
                 }
             }
         }
 
-        if (this.firstUpdate && !this.killed) {
+        if (this.firstUpdate) {
             this.firstUpdate = false;
-            EventBus.instance().post(new StreamLabsDonationInitializedEvent());
+            EventBus.instance().postAsync(new StreamLabsDonationInitializedEvent());
         }
 
-        PhantomBot.instance().getDataStore().SetInteger("settings", "", "DonationsCache_lastId", lastId);
+        if (hasChanged) {
+            PhantomBot.instance().getDataStore().SetInteger("settings", "", "DonationsCache_lastId", this.lastId);
+        }
+    }
+
+    @Handler
+    public void onWebPanelSocketUpdateEvent(WebPanelSocketUpdateEvent event) {
+        if (event.getId().equals("streamlabs_authorize") && event.getArgs().length >= 4) {
+            try {
+                PhantomBot.instance().panelhandler().sendObject(event.getId(), Collections.singletonMap("success",
+                StreamLabsAPI.authorize(event.getArgs()[0], event.getArgs()[1], event.getArgs()[2], event.getArgs()[3])));
+            } catch (URISyntaxException ex) {
+                PhantomBot.instance().panelhandler().sendObject(event.getId(), Collections.singletonMap("success", false));
+                com.gmt2001.Console.err.printStackTrace(ex);
+            }
+        }
     }
 
     public void kill() {
-        this.killed = true;
+        if (this.updateFuture != null) {
+            this.updateFuture.cancel(true);
+        }
     }
 }

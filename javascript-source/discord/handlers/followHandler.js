@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
      * @event webPanelSocketUpdate
      */
     $.bind('webPanelSocketUpdate', function(event) {
-        if (event.getScript().equalsIgnoreCase('./discord/handlers/followHandler.js')) {
+        if ($.equalsIgnoreCase(event.getScript(), './discord/handlers/followHandler.js')) {
             toggle = $.getIniDbBoolean('discordSettings', 'followToggle', false);
             message = $.getIniDbString('discordSettings', 'followMessage', '(name) just followed!');
             channelName = $.getIniDbString('discordSettings', 'followChannel', '');
@@ -53,8 +53,18 @@
             return;
         }
 
-        if (s.match(/\(name\)/g)) {
-            s = $.replace(s, '(name)', follower);
+        if (s.match(/\(name\)/)) {
+            let name = $.viewer.getByLogin(follower);
+            if (name !== null) {
+                try {
+                    name = name.name();
+                } catch (e) {
+                    name = follower;
+                }
+            } else {
+                name = follower;
+            }
+            s = $.replace(s, '(name)', name);
         }
 
         $.discordAPI.sendMessageEmbed(channelName, new Packages.tv.phantombot.discord.util.EmbedBuilder()
@@ -80,7 +90,7 @@
             action = args[0],
             subAction = args[1];
 
-        if (command.equalsIgnoreCase('followhandler')) {
+        if ($.equalsIgnoreCase(command, 'followhandler')) {
             if (action === undefined) {
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.followhandler.usage'));
                 return;
@@ -89,7 +99,7 @@
             /**
              * @discordcommandpath followhandler toggle - Toggles the follower announcements.
              */
-            if (action.equalsIgnoreCase('toggle')) {
+            if ($.equalsIgnoreCase(action, 'toggle')) {
                 toggle = !toggle;
                 $.inidb.set('discordSettings', 'followToggle', toggle);
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.followhandler.follow.toggle', (toggle === true ? $.lang.get('common.enabled') : $.lang.get('common.disabled'))));
@@ -98,7 +108,7 @@
             /**
              * @discordcommandpath followhandler message [message] - Sets the follower announcement message.
              */
-            if (action.equalsIgnoreCase('message')) {
+            if ($.equalsIgnoreCase(action, 'message')) {
                 if (subAction === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.followhandler.follow.message.usage'));
                     return;
@@ -112,7 +122,7 @@
             /**
              * @discordcommandpath followhandler channel [channel name] - Sets the channel that announcements from this module will be said in.
              */
-            if (action.equalsIgnoreCase('channel')) {
+            if ($.equalsIgnoreCase(action, 'channel')) {
                 if (subAction === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.followhandler.follow.channel.usage'));
                     return;
@@ -126,9 +136,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/handlers/followHandler.js', 'followhandler', 1);
         $.discord.registerSubCommand('followhandler', 'toggle', 1);
         $.discord.registerSubCommand('followhandler', 'message', 1);

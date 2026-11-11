@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,38 +15,46 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global Packages */
+
 /**
  * This module is to handle custom keywords in discord.
  */
-(function() {
+(function () {
 
-    /**
+    /*
      * @event discordChannelMessage
+     * @usestransformers global discord commandevent keywordevent noevent
      */
-    $.bind('discordChannelMessage', function(event) {
-        var message = event.getMessage().toLowerCase(),
-            channel = event.getDiscordChannel(),
-            keys = $.inidb.GetKeyList('discordKeywords', ''),
-            keyword,
-            i;
+    $.bind('discordChannelMessage', function (event) {
+        var message = event.getMessage(),
+                channel = event.getDiscordChannel(),
+                messagePartsLower = message.toLowerCase().split(' '),
+                keys = $.inidb.GetKeyList('discordKeywords', ''),
+                i;
 
-        for (i in keys) {
-            // Some users use special symbols that may break regex so this will fix that.
-            try {
-                if (message.match('\\b' + keys[i] + '\\b') && !message.includes('!keyword')) {
-                    keyword = $.inidb.get('discordKeywords', keys[i]);
-                    $.discord.say(channel, $.discord.tags(event, keyword));
-                    break;
-                }
-            } catch (ex) {
-                if (ex.message.toLowerCase().includes('invalid quantifier') || ex.message.toLowerCase().includes('syntax')) {
-                    if (message.includes(keys[i]) && !message.includes('!keyword')) {
-                        keyword = $.inidb.get('discordKeywords', keys[i]);
-                        $.discord.say(channel, $.discord.tags(event, keyword));
-                        break;
-                    }
-                } else {
-                    $.log.error('Failed to send keyword "' + keys[i] + '": ' + ex.message);
+        if (message.startsWith('!keyword')) {
+            return;
+        }
+
+        function executeKeyword(keyword, response, event) {
+            var cmdEvent = new Packages.tv.phantombot.event.discord.channel.DiscordChannelCommandEvent(event.getDiscordUser(), event.getDiscordChannel(),
+                            event.getDiscordMessage(), 'keyword_' + keyword, response, event.isAdmin());
+            var tag = $.transformers.tags(cmdEvent, response, ['discord', ['commandevent', 'keywordevent', 'noevent']], {platform: 'discord'});
+            if (tag !== null) {
+                $.discord.say(channel, tag);
+            }
+        }
+
+        for (var i = 0; i < keys.length; i++) {
+            var str = '',
+                    caseAdjustedMessageParts = messagePartsLower;
+            for (var idx = 0; idx < caseAdjustedMessageParts.length; idx++) {
+                // Create a string to match on the keyword.
+                str += (caseAdjustedMessageParts[idx] + ' ');
+                // Either match on the exact word or phrase if it contains it.
+                if ((keys[i].includes(' ') && str.includes(keys[i])) || (caseAdjustedMessageParts[idx] + '') === (keys[i] + '')) {
+                    executeKeyword(keys[i], $.inidb.get('discordKeywords', keys[i]), event);
                     break;
                 }
             }
@@ -56,17 +64,15 @@
     /**
      * @event discordChannelCommand
      */
-    $.bind('discordChannelCommand', function(event) {
-        var sender = event.getSender(),
-            channel = event.getDiscordChannel(),
-            command = event.getCommand(),
-            mention = event.getMention(),
-            arguments = event.getArguments(),
-            args = event.getArgs(),
-            action = args[0],
-            subAction = args[1];
+    $.bind('discordChannelCommand', function (event) {
+        var channel = event.getDiscordChannel(),
+                command = event.getCommand(),
+                mention = event.getMention(),
+                args = event.getArgs(),
+                action = args[0],
+                subAction = args[1];
 
-        if (command.equalsIgnoreCase('keyword')) {
+        if ($.equalsIgnoreCase(command, 'keyword')) {
             if (action === undefined) {
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.keywordhandler.usage'));
                 return;
@@ -75,7 +81,7 @@
             /**
              * @discordcommandpath keyword add [keyword] [response] - Adds a custom keyword.
              */
-            if (action.equalsIgnoreCase('add')) {
+            if ($.equalsIgnoreCase(action, 'add')) {
                 if (subAction === undefined || args[2] === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.keywordhandler.add.usage'));
                     return;
@@ -93,7 +99,7 @@
             /**
              * @discordcommandpath keyword edit [keyword] [response] - Edits a custom keyword.
              */
-            if (action.equalsIgnoreCase('edit')) {
+            if ($.equalsIgnoreCase(action, 'edit')) {
                 if (subAction === undefined || args[2] === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.keywordhandler.edit.usage'));
                     return;
@@ -111,7 +117,7 @@
             /**
              * @discordcommandpath keyword remove [keyword] - Removes a custom keyword.
              */
-            if (action.equalsIgnoreCase('remove')) {
+            if ($.equalsIgnoreCase(action, 'remove')) {
                 if (subAction === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.keywordhandler.remove.usage'));
                     return;
@@ -129,9 +135,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function () {
         $.discord.registerCommand('./discord/handlers/keywordHandler.js', 'keyword', 1);
         $.discord.registerSubCommand('keyword', 'add', 1);
         $.discord.registerSubCommand('keyword', 'edit', 1);

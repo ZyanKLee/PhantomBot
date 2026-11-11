@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,9 +17,15 @@
 package tv.phantombot.cache;
 
 import com.gmt2001.TwitchAPIv5;
+import com.gmt2001.util.concurrent.ExecutorService;
+
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -28,13 +34,13 @@ import org.json.JSONObject;
  *
  * @author ScaniaTV
  */
-public class TwitchTeamsCache implements Runnable {
+public class TwitchTeamsCache {
 
+    private static final long INTERVAL_MINUTES = 1;
     private static TwitchTeamsCache INSTANCE;
     private static final Map<String, Team> teams = new HashMap<>();
-    private final Thread updateThread;
     private final String channelName;
-    private boolean isKilled = false;
+    private final ScheduledFuture<?> update;
 
     /**
      * Method that starts this cache, and returns it.
@@ -55,33 +61,27 @@ public class TwitchTeamsCache implements Runnable {
      *
      * @param channelName
      */
-    @SuppressWarnings("CallToThreadStartDuringObjectConstruction")
     private TwitchTeamsCache(String channelName) {
         this.channelName = channelName;
 
-        this.updateThread = new Thread(this, "tv.phantombot.cache.TwitchTeamsCache");
-        this.updateThread.setUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
-        this.updateThread.start();
+       this.update = ExecutorService.scheduleAtFixedRate(() -> {
+            this.run();
+        }, 0, INTERVAL_MINUTES, TimeUnit.MINUTES);
     }
 
     /**
      * Method that updates the Twitch teams.
      */
-    @Override
-    public void run() {
-        while (!isKilled) {
-            try {
-                updateCache();
-            } catch (Exception ex) {
-                com.gmt2001.Console.err.printStackTrace(ex);
-            }
-            try {
-                Thread.sleep(60 * 1000);
-            } catch (InterruptedException ex) {
-                // Ignore this.
-                // ex.printStackTrace();
-            }
+    private void run() {
+        try {
+            updateCache();
+        } catch (JSONException ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
         }
+    }
+
+    public void kill() {
+        this.update.cancel(false);
     }
 
     /**
@@ -231,6 +231,33 @@ public class TwitchTeamsCache implements Runnable {
          */
         public JSONObject getObject() {
             return obj;
+        }
+
+        @Override
+        public int hashCode() {
+            final int prime = 31;
+            int result = 1;
+            result = prime * result + getEnclosingInstance().hashCode();
+            result = prime * result + Objects.hash(obj);
+            return result;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (obj == null)
+                return false;
+            if (getClass() != obj.getClass())
+                return false;
+            Team other = (Team) obj;
+            if (!getEnclosingInstance().equals(other.getEnclosingInstance()))
+                return false;
+            return Objects.equals(this.obj, other.obj);
+        }
+
+        private TwitchTeamsCache getEnclosingInstance() {
+            return TwitchTeamsCache.this;
         }
     }
 }

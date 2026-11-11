@@ -1,5 +1,5 @@
-/*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+/**
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,12 +14,242 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+/* global Keyframes */
+
 $(function () {
-    var webSocket = getWebSocket(),
-            queryMap = getQueryMap(),
-            isPlaying = false,
-            isDebug = localStorage.getItem('phantombot_alerts_debug') === 'true' || false;
-    queue = [];
+    const webSocket = getWebSocket(),
+        queryMap = getQueryMap(),
+        isDebug = getOptionSetting('enableDebug', localStorage.getItem('phantombot_alerts_debug') === 'true'),
+        imgEl = document.getElementById('alert-image'),
+        audioEl = document.getElementById('alert-audio'),
+        videoEl = document.getElementById('alert-video'),
+        SILENT_WAV =
+            'data:audio/wav;base64,' +
+            'UklGRmQGAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YUAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        PLAYBACK_TYPE = {
+            NONE: 0,
+            AUDIO: 1,
+            VIDEO: 2,
+            GIF: 4,
+            TEXT: 8
+        };
+
+    let playingMask = PLAYBACK_TYPE.NONE,
+        audioUnlocked = false,
+        unlocking = false,
+        queue = [],
+        queueProcessing = false,
+        playTimeout,
+        fadeTime,
+        hasCustomDuration = false,
+        audioCtx = null,
+        gainNode = null,
+        audioSource = null,
+        videoSource = null,
+        ignoredEmotes = {'twitch': [], 'ffz': [], 'bttv': [], 'sevenTv': [], 'emoji': [], 'local': []};
+
+    imgEl.onload = () => printDebug('GIF loaded');
+    imgEl.onerror = (e) => printDebug('Error: GIF failed to load: ' + e, true);
+    audioEl.oncanplay = () => printDebug('Audio loaded');
+    audioEl.onstalled = () => printDebug('Error: Audio loading stalled', true);
+    audioEl.onerror = (e) => printDebug('Error: Audio failed to load: ' + e, true);
+    videoEl.onload = () => printDebug('Video loaded');
+    videoEl.onstalled = () => printDebug('Error: Video loading stalled', true);
+    videoEl.onerror = (e) => printDebug('Error: Video failed to load: ' + e, true);
+
+    let audioFormats = {
+        maybe: [],
+        probably: []
+    };
+
+    let videoFormats = {
+        maybe: [],
+        probably: []
+    };
+
+    const CONF_ENABLE_FLYING_EMOTES = 'enableFlyingEmotes';
+    const CONF_ENABLE_GIF_ALERTS = 'enableGifAlerts';
+    const CONF_ENABLE_VIDEO_CLIPS = 'enableVideoClips';
+    const CONF_VIDEO_CLIP_VOLUME = 'videoClipVolume';
+    const CONF_GIF_ALERT_VOLUME = 'gifAlertVolume';
+    const CONF_FADE_DURTAION = 'fadeDuration';
+    const CONF_STOP_GIF_WITH_AUDIO = 'stopGifWithAudio';
+
+    const PROVIDER_TWITCH = 'twitch';
+    const PROVIDER_LOCAL = 'local';
+    const PROVIDER_MAXCDN = 'maxcdn';
+    const PROVIDER_FFZ = 'ffz';
+    const PROVIDER_BTTV = 'bttv';
+    const PROVIDER_SEVENTV = 'sevenTv';
+
+    /**
+     * Helper to set element volume, properly handling volume > 1.0 using a GainNode.
+     * @param {HTMLMediaElement} element
+     * @param {Number|String} volume
+     */
+    function applyVolume(element, volume) {
+        let vol = parseFloat(volume);
+        if (isNaN(vol)) vol = 1.0;
+
+        element.volume = Math.min(vol, 1.0);
+
+        if (vol > 1.0) {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+                gainNode = audioCtx.createGain();
+                gainNode.connect(audioCtx.destination);
+            }
+            if (element === audioEl) {
+                if (!audioSource) {
+                    audioSource = audioCtx.createMediaElementSource(audioEl);
+                }
+                audioSource.disconnect();
+                audioSource.connect(gainNode);
+            } else if (element === videoEl) {
+                if (!videoSource) {
+                    videoSource = audioCtx.createMediaElementSource(videoEl);
+                }
+                videoSource.disconnect();
+                videoSource.connect(gainNode);
+            }
+            gainNode.gain.value = vol;
+        } else {
+            if (element === audioEl && audioSource) {
+                audioSource.disconnect();
+                audioSource.connect(audioCtx.destination);
+            } else if (element === videoEl && videoSource) {
+                videoSource.disconnect();
+                videoSource.connect(audioCtx.destination);
+            }
+        }
+    }
+
+    /**
+     * Set the bit for the given playback type to indicate it's playing.
+     * @param {*} bit Playback type bit to set
+     */
+    function setPlayingBit(bit) {
+        playingMask |= bit;
+    }
+
+    /**
+     * Clear the bit for the given playback type to indicate it's no longer playing.
+     * @param {*} bit Playback type bit to clear
+     */
+    function clearPlayingBit(bit) {
+        playingMask &= ~bit;
+    }
+
+    /**
+     * Check if the given bit is set, indicating that type is currently playing.
+     * @param {*} bit 
+     * @returns true if type is currently playing, false otherwise
+     */
+    function isPlayingBit(bit) {
+        return (playingMask & bit) === bit;
+    }
+
+    /**
+     * Check if any media is currently playing.
+     * @returns true if any media is currently playing, false otherwise
+     */
+    function isPlayingAny() {
+        return playingMask !== 0;
+    }
+
+    function populateIgnoredEmotes() {
+        const baseUri = window.location.protocol + '//' + window.location.host + '/addons/ignored-emotes';
+        for (const provider in ignoredEmotes) {
+            $.ajax({
+                url: `${baseUri}/${provider}.txt`,
+                method: 'GET',
+                success: function(data) {
+                    ignoredEmotes[provider] = data.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+                }
+            });
+        }
+    }
+    populateIgnoredEmotes();
+
+
+    //Copied from https://davidwalsh.name/detect-supported-audio-formats-javascript
+    function populateSupportedAudioTypes() {
+        let audio = new Audio();
+
+        let formats = {
+            wav: 'audio/wav',
+            mp3: 'audio/mpeg',
+            mp4: 'audio/mp4',
+            m4a: 'audio/mp4',
+            aac: 'audio/aac',
+            opus: 'audio/ogg; codecs="opus"',
+            ogg: 'audio/ogg; codecs="vorbis"',
+            oga: 'audio/ogg; codecs="vorbis"',
+            webm: 'audio/webm; codecs="vorbis"',
+            flac: 'audio/flac'
+        };
+
+        for (let x in formats) {
+            let ret = audio.canPlayType(formats[x]);
+            printDebug('supportsAudioType(' + x + '): ' + ret);
+
+            if (ret === 'maybe') {
+                audioFormats.maybe.push(x);
+            } else if (ret === 'probably') {
+                audioFormats.probably.push(x);
+            }
+        }
+    }
+    populateSupportedAudioTypes();
+
+    //Copied from https://davidwalsh.name/detect-supported-video-formats-javascript
+    function populateSupportedVideoTypes() {
+        let video = document.createElement('video');
+
+        let formats = {
+            ogg: 'video/ogg; codecs="theora"',
+            ogv: 'video/ogg; codecs="theora"',
+            webm: 'video/webm; codecs="vp8"',
+            mp4: 'video/mp4'
+        };
+
+        for (let x in formats) {
+            let ret = video.canPlayType(formats[x]);
+            printDebug('supportsVideoType(' + x + '): ' + ret);
+
+            if (ret === 'maybe') {
+                videoFormats.maybe.push(x);
+            } else if (ret === 'probably') {
+                videoFormats.probably.push(x);
+            }
+        }
+    }
+    populateSupportedVideoTypes();
+
+    /**
+     * Select the first matching soundfile based on playability.
+     * @param {String[]} candidates Available sound files on the server to play
+     * @returns the first matching soundfile
+     */
+    function chooseBestCandidate(candidates) {
+        if (!Array.isArray(candidates) || candidates.length === 0) return null;
+
+        let lastResort = candidates[0];
+        // Check candidates against probably list
+        for (const candidate of candidates) {
+            const ext = candidate.substring(candidate.lastIndexOf('.') + 1);
+            if (audioFormats.probably.includes(ext)) {
+                return candidate;
+            }
+            if (audioFormats.maybe.includes(ext)) {
+                lastResort = candidate;
+            }
+        }
+
+        // If no probably match, just return first candidate
+        return lastResort;
+    }
 
     /*
      * @function Gets a new instance of the websocket.
@@ -42,12 +272,12 @@ $(function () {
      */
     function getQueryMap() {
         let queryString = window.location.search, // Query string that starts with ?
-                queryParts = queryString.substr(1).split('&'), // Split at each &, which is a new query.
+                queryParts = queryString.slice(1).split('&'), // Split at each &, which is a new query.
                 queryMap = new Map(); // Create a new map for save our keys and values.
 
         for (let i = 0; i < queryParts.length; i++) {
-            let key = queryParts[i].substr(0, queryParts[i].indexOf('=')),
-                    value = queryParts[i].substr(queryParts[i].indexOf('=') + 1, queryParts[i].length);
+            let key = queryParts[i].substring(0, queryParts[i].indexOf('=')),
+                    value = queryParts[i].slice(queryParts[i].indexOf('=') + 1);
 
             if (key.length > 0 && value.length > 0) {
                 queryMap.set(key, value);
@@ -78,7 +308,7 @@ $(function () {
 
         // Refresh the page.
         window.location.reload();
-    }
+    };
 
     /*
      * @function Checks if the query map has the option, if not, returns default.
@@ -102,142 +332,449 @@ $(function () {
      */
     function sendToSocket(message) {
         try {
+            printDebug('sendToDocket: ' + JSON.stringify(message));
             webSocket.send(JSON.stringify(message));
         } catch (ex) {
             printDebug('Failed to send a message to the socket: ' + ex.stack);
         }
     }
 
-    //Copied from https://davidwalsh.name/detect-supported-audio-formats-javascript
-    function supportsAudioType(type) {
-        let audio;
-
-        // Allow user to create shortcuts, i.e. just "mp3"
-        let formats = {
-            mp3: 'audio/mpeg',
-            aac: 'audio/aac',
-            ogg: 'audio/ogg; codecs="vorbis"'
-        };
-
-        if (!audio) {
-            audio = document.createElement('audio');
-        }
-
-        let ret = audio.canPlayType(formats[type] || type);
-
-        if (getOptionSetting('show-debug', 'false') === 'true') {
-            $('.main-alert').append('<br />supportsAudioType(' + type + '): ' + ret);
-        }
-
-        return ret;
-    }
-
-    //Copied from https://davidwalsh.name/detect-supported-video-formats-javascript
-    function supportsVideoType(type) {
-        let video;
-
-        // Allow user to create shortcuts, i.e. just "webm"
-        let formats = {
-            ogg: 'video/ogg; codecs="theora"',
-            ogv: 'video/ogg; codecs="theora"',
-            webm: 'video/webm; codecs="vp8, vorbis"',
-            mp4: 'video/mp4'
-        };
-
-        if (!video) {
-            video = document.createElement('video');
-        }
-
-        let ret = video.canPlayType(formats[type] || type);
-
-        if (getOptionSetting('show-debug', 'false') === 'true') {
-            $('.main-alert').append('<br />supportsVideoType(' + type + '): ' + ret);
-        }
-
-        return ret;
-    }
-
     /*
      * @function Handles the user interaction for the page.
      */
-    function handleBrowserInteraction() {
-        const audio = new Audio();
+    async function handleBrowserInteraction() {
+        if (audioUnlocked || unlocking) return;
 
-        // Try to play to see if we can interact.
-        audio.play().catch(function (err) {
-            // User need to interact with the page.
-            if (err.toString().startsWith('NotAllowedError')) {
-                $('.main-alert').append($('<button/>', {
-                    'html': 'Click me to activate audio hooks.',
-                    'style': 'top: 50%; position: absolute; font-size: 30px; font-weight: 30; cursor: pointer;'
-                }).on('click', function () {
-                    $(this).remove();
-                }));
-            }
+        unlocking = true;
+        setPlayingBit(PLAYBACK_TYPE.AUDIO);
+        
+        if (!audioEl.src) audioEl.src = SILENT_WAV;
+        audioEl.muted = true;
+        await audioEl.play().catch(function (err) {
+                if (String(err.name) === 'NotAllowedError' || String(err).includes('NotAllowedError')) {
+                    printDebug('Audio autoplay not allowed. User must interact!', true);
+                    $('#alerts-container').append($('<button/>', {
+                            'html': 'Click me to activate audio hooks.',
+                            'id': 'browser-interaction-button'
+                        }).on('click', async function () {
+                            $(this).remove();
+                        }));
+                } else {
+                    printDebug('Audio could not not be played for an unknown reason', true);
+                }
+            });
+        
+        printDebug('Audio autoplay allowed. No user interaction needed');
+        stopAudio();
+        audioEl.muted = false;
+        audioUnlocked = true;
+        unlocking = false;  
+    }
+
+    async function playElement(element) {
+        printDebug('Playing ' + element.src);
+        element.muted = false;
+        try {
+            element.currentTime = 0;
+        } catch (e) {
+            printDebug('Error: Media not seekable ' + e, true);
+        }
+        element.play().catch((e) => {
+            printDebug('Error: Failed to play ' + element.src, true);
+            printDebug(e, true);
+            stopAllPlayingMedia();
         });
     }
 
-    /*
+    async function playAudio() {
+        setPlayingBit(PLAYBACK_TYPE.AUDIO);
+        playElement(audioEl);
+    }
+
+    async function playVideo() {
+        setPlayingBit(PLAYBACK_TYPE.VIDEO);
+        playElement(videoEl);
+    }
+
+    /**
      * @function Handles the queue.
      */
-    function handleQueue() {
-        let event = queue[0];
+    async function handleQueue() {
+        // Do not do anything if the queue is empty
+        if (queueProcessing || queue.length === 0) {
+            return;
+        }
 
-        if (event !== undefined && isPlaying === false) {
-            printDebug('Processing event ' + JSON.stringify(event));
+        queueProcessing = true;
+        try {
+            let played = [];
+            for (let i = 0; i < queue.length; i++) {
+                let event = queue.slice(i, i + 1)[0];
+                let ignoreIsPlaying = (event.ignoreIsPlaying !== undefined ? event.ignoreIsPlaying : false);
+                let isPlayed = false;
 
-            isPlaying = true;
-            if (event.alert_image !== undefined) {
-                handleGifAlert(event);
-            } else {
-                handleAudioHook(event);
+                try {
+                    if (event === undefined) {
+                        isPlayed = true;
+                        console.error('Received event of type undefined. Ignoring.');
+                    } else if (event.emoteId !== undefined) {
+                        isPlayed = true;
+                        // do not respect isPlaying for emotes
+                        printDebug('Processing event: ' + JSON.stringify(event));
+                        handleEmote(event);
+                    } else if (event.script !== undefined) {
+                        isPlayed = true;
+                        printDebug('Processing event: ' + JSON.stringify(event));
+                        handleMacro(event);
+                    } else if (event.text !== undefined) {
+                        isPlayed = true;
+                        printDebug('Processing event: ' + JSON.stringify(event));
+                        handleText(event);
+                    } else if (event.stopMedia !== undefined) {
+                        isPlayed = true;
+                        printDebug('Processing event: ' + JSON.stringify(event));
+                        handleStopMedia(event);
+                    } else if (ignoreIsPlaying || !isPlayingAny()) {
+                        isPlayed = true;
+                        // sleep a bit to reduce the overlap
+                        await sleep(100);
+                        printDebug('Processing event: ' + JSON.stringify(event));
+                        if (ignoreIsPlaying) {
+                            clearTimeout(playTimeout);
+                        }
+                        // called method is responsible to reset this
+                        if (event.type === 'playVideoClip'
+                                    && getOptionSetting(CONF_ENABLE_VIDEO_CLIPS, 'true') === 'true') {
+                            handleVideoClip(event);
+                        } else if (event.alert_image !== undefined 
+                                    && getOptionSetting(CONF_ENABLE_GIF_ALERTS, 'true') === 'true') {
+                            handleGifAlert(event);
+                        } else if (event.audio_panel_hook !== undefined
+                                    && getOptionSetting('enableAudioHooks', getOptionSetting('allow-audio-hooks', 'false')) === 'true') {
+                            handleAudioHook(event);
+                        } else {
+                            printDebug('Received message and don\'t know what to do about it: ' + event);
+                        }
+                    }
+                } finally {
+                    if (isPlayed) {
+                        played.push(i);
+                    }
+                }
             }
-            queue.splice(0, 1);
+
+            played.reverse().forEach(i => queue.splice(i, 1));
+        } finally {
+            queueProcessing = false;
         }
     }
 
-    /*
-     * @function Checks for if the audio file exists since the socket doesn't pass the file type.
-     *
-     * @param  {String} name
-     * @return {String}
+    function handleGifAlert(event) {
+        const gifData = event.alert_image;
+        const candidates = event.audioCandidates || [];
+        const MEDIA_URL_BASE = '/config/gif-alerts/';
+        
+        let gifDuration = null,
+            gifVolume = getOptionSetting(CONF_GIF_ALERT_VOLUME, '0.8'),
+            gifFile = gifData,
+            gifCss = '',
+            gifText;
+        
+        // If a comma is found, that means there are custom settings.
+        if (gifData.indexOf(',') !== -1) {
+            let gifSettingParts = gifData.split(',');
+
+            // Loop through each setting and set it if found.
+            gifSettingParts.forEach(function (value, index) {
+                switch (index) {
+                    case 0:
+                        gifFile = value;
+                        break;
+                    case 1:
+                        gifDuration = (parseInt(value) * 1000);
+                        hasCustomDuration = true;
+                        break;
+                    case 2:
+                        gifVolume = value;
+                        break;
+                    case 3:
+                        gifCss = value;
+                        break;
+                    case 4:
+                        gifText = value;
+                        break;
+                    default:
+                        gifText = gifText + ',' + value;
+                        break;
+                }
+            });
+        }
+        
+        // Video forward to proper handler
+        if (gifFile.match(/\.(webm|mp4|ogg|ogv)$/) !== null) {
+            let videoData = new Object();
+            videoData.filename = gifFile;
+            videoData.duration = gifDuration;
+            videoData.volume = gifVolume;
+            handleVideoClip(videoData, MEDIA_URL_BASE, gifText, gifCss);
+            return;
+        }
+
+        const gifUrl = MEDIA_URL_BASE + encodeURIComponent(gifFile);
+        // pick first playable candidate
+        const audioCandidate = chooseBestCandidate(candidates);
+        const audioUrl = audioCandidate
+            ? MEDIA_URL_BASE + encodeURIComponent(audioCandidate)
+            : null;
+
+        imgEl.setAttribute('style', gifCss);
+        imgEl.src = gifUrl;
+        imgEl.style.display = "block";
+        imgEl.className = 'fade-in';
+        if (gifText) {
+            addAlertText(gifText, gifCss);
+        }
+        setPlayingBit(PLAYBACK_TYPE.GIF);
+
+        // Set playTimeout if we have a duration or the synchronize option is disabled
+        if (hasCustomDuration || getOptionSetting(CONF_STOP_GIF_WITH_AUDIO, 'false') === 'false') {
+            gifDuration = gifDuration === null ? 3000 : gifDuration
+            gifDuration -= fadeTime;
+            gifDuration = Math.max((2*fadeTime), gifDuration); //fade-in + fade-out anything less is not making much sense
+            playTimeout = setTimeout(() => {
+                printDebug('Gif complete (duration), after: ' + (gifDuration/1000) + ' seconds');
+                stopAllPlayingMedia();
+            }, gifDuration);
+        }
+        
+
+        // If no audio, we're done (gif only)
+        if (!audioUrl) return;
+
+        applyVolume(audioEl, gifVolume);
+        audioEl.src = audioUrl;
+        playAudio();
+    }
+
+    function handleText(event) {
+        addAlertText(event.text, event.css);
+        let duration = 3000;
+        if (event.duration) {
+            let newDuration = parseInt(event.duration);
+            if (!isNaN(newDuration)) {
+                duration = newDuration * 1000;
+            }
+        }
+        playTimeout = setTimeout(() => {
+            printDebug('Text complete (duration), after: ' + (duration/1000) + ' seconds');
+            stopAllPlayingMedia();
+        }, duration);
+    }
+    
+    function addAlertText(alertText, alertCSS) {
+        if (!alertText) {
+            return;
+        }
+        setPlayingBit(PLAYBACK_TYPE.TEXT);
+
+        // p object to hold custom gif alert text and style
+        let textObj = $('<p/>', {
+            'style': alertCSS ? alertCSS : ''
+        }).html(alertText);
+        // Append the custom text object to the page
+        $('#alert-text').append(textObj).fadeIn(fadeTime);
+        const textHeight = $('#text-alert-container')[0].offsetHeight;
+        videoEl.style.maxHeight = 'calc(100vh - ' + textHeight + 'px)';
+        imgEl.style.maxHeight = 'calc(100vh - ' + textHeight + 'px)';
+    }
+
+    function removeAlertText() {
+        $('#alert-text').fadeOut((fadeTime - 10), function () { //Remove the text with a fade out slight earlier than the video/gif to prevent a jump during removal.
+            let t = $(this);
+            // Remove the p tag
+            t.find('p').remove();
+        });
+        videoEl.style.removeProperty('max-height');
+        imgEl.style.removeProperty('max-height');
+        clearPlayingBit(PLAYBACK_TYPE.TEXT);
+    }
+
+    /**
+     * Clears the stop timeout if no media is playing anymore.
      */
-    function getAudioFile(name, path) {
-        let defaultPath = '/config/audio-hooks/',
-                fileName = '',
-                extensions = ['mp3', 'aac', 'ogg'],
-                found = false;
+    function checkAndClearPlayTimeout() {
+        if (!isPlayingAny()) {
+            clearTimeout(playTimeout);
+            hasCustomDuration = false;
+        }
+    }
 
-        if (path !== undefined) {
-            defaultPath = path;
+    /**
+     * Stops the audio playback if it's currently playing.
+     */
+    async function stopAudio() {
+        if (!isPlayingBit(PLAYBACK_TYPE.AUDIO)) {
+            return;
         }
 
-        for (let x in extensions) {
-            if (fileName.length > 0) {
-                break;
+        try {
+            printDebug('Stopping audio');
+
+            if (!audioEl.paused) {
+                audioEl.pause();
             }
-            if (supportsAudioType(extensions[x]) !== '') {
-                found = true;
-                $.ajax({
-                    async: false,
-                    method: 'HEAD',
-                    url: defaultPath + name + '.' + extensions[x],
-                    success: function () {
-                        fileName = (defaultPath + name + '.' + extensions[x]);
-                    }
-                });
+
+            audioEl.removeAttribute('src');
+            audioEl.load();
+
+            if (audioSource && audioCtx) {
+                audioSource.disconnect();
+                audioSource.connect(audioCtx.destination);
             }
+            audioEl.volume = 1;
+
+            clearPlayingBit(PLAYBACK_TYPE.AUDIO);
+        } catch (e) {
+            printDebug('Error: audio stop failed:' + e, true);
         }
 
-        if (!found) {
-            printDebug('No audio formats were supported by the browser!', true);
+        checkAndClearPlayTimeout();
+    }
+
+    /**
+     * Stops the GIF playback if it's currently playing.
+     */
+    async function stopGIF() {
+        if (!isPlayingBit(PLAYBACK_TYPE.GIF)) {
+            return;
         }
 
-        if (getOptionSetting('show-debug', 'false') === 'true' && path === undefined) {
-            $('.main-alert').append('<br />getAudioFile(' + name + '): Unable to find file in a supported format');
+        let shouldSleep = false;
+        if ($('#alert-text').children().length > 0) {
+            removeAlertText();
+            shouldSleep = true;
         }
 
-        return fileName;
+        try {
+            if (imgEl.classList.contains('fade-in')) {
+                imgEl.classList.remove('fade-in');
+                imgEl.classList.add('fade-out');
+                shouldSleep = true;
+            }
+
+            printDebug('Stopping Gif, shouldSleep: ' + shouldSleep);
+
+            if (shouldSleep) {
+                await sleep(fadeTime);
+            }
+
+            imgEl.removeAttribute('src');
+            imgEl.removeAttribute('style');
+            imgEl.style.display = "none";
+            clearPlayingBit(PLAYBACK_TYPE.GIF);
+        } catch (e) {
+            console.warn('Error: gif stop failed:' + e, true);
+        }
+
+        checkAndClearPlayTimeout();
+    }
+
+    async function stopText() {
+        if (!isPlayingBit(PLAYBACK_TYPE.TEXT)) {
+            return;
+        }
+
+        removeAlertText();
+        await sleep(fadeTime);
+    }
+
+    /**
+     * Stops the video playback if it's currently playing.
+     */
+    async function stopVideo() {
+        if (!isPlayingBit(PLAYBACK_TYPE.VIDEO)) {
+            return;
+        }
+
+        let shouldSleep = false;
+        if ($('#alert-text').children().length > 0) {
+            removeAlertText();
+            shouldSleep = true;
+        }
+
+        try {
+            if (videoEl.classList.contains('fade-in')) {
+                videoEl.classList.remove('fade-in');
+                videoEl.classList.add('fade-out');
+                shouldSleep = true;
+            }
+
+            printDebug('Stopping video, shouldSleep: ' + shouldSleep);
+
+            if (shouldSleep) {
+                await sleep(fadeTime);
+            }
+
+            if (!videoEl.paused) {
+                videoEl.pause();
+            }
+
+            videoEl.removeAttribute('src');
+            videoEl.removeAttribute('style')
+            videoEl.load();
+
+            if (videoSource && audioCtx) {
+                videoSource.disconnect();
+                videoSource.connect(audioCtx.destination);
+            }
+            videoEl.volume = 1;
+
+            videoEl.style.display = "none";
+            clearPlayingBit(PLAYBACK_TYPE.VIDEO);
+        } catch (e) {
+            console.warn('Error: video stop failed:' + e, true);
+        }
+
+        checkAndClearPlayTimeout();
+    }
+
+    /**
+     * Stops all currently playing media (audio, video, gif).
+     */
+    async function stopAllPlayingMedia() {
+        if (!isPlayingAny()) {
+            return;
+        }
+ 
+        printDebug('Stopping media: (Audio: ' + isPlayingBit(PLAYBACK_TYPE.AUDIO) + ') (Video: ' + isPlayingBit(PLAYBACK_TYPE.VIDEO) + ') (Gif: ' + isPlayingBit(PLAYBACK_TYPE.GIF) + ') (Text: ' + isPlayingBit(PLAYBACK_TYPE.TEXT) + ')');
+
+        await stopGIF(); // wait for the gif to disappear before stopping audio
+        stopAudio();
+        stopVideo();
+        await stopText();
+    }
+
+    async function handleStopMedia(json) {
+        if (json.stopMedia === 'all') {
+            stopAllPlayingMedia();
+            return;
+        }
+
+        if (json.stopMedia.indexOf('gif') >= 0) {
+            await stopGIF();
+        }
+
+        if (json.stopMedia.indexOf('video') >= 0) {
+            stopVideo();
+        }
+
+        if (json.stopMedia.indexOf('audio') >= 0) {
+            stopAudio();
+        } 
+
+        if (json.stopMedia.indexOf('text') >= 0) {
+            await stopText();
+        }    
     }
 
     /*
@@ -247,177 +784,292 @@ $(function () {
      */
     function handleAudioHook(json) {
         // Make sure we can allow audio hooks.
-        if (getOptionSetting('allow-audio-hooks', 'false') === 'true') {
-            let audioFile = getAudioFile(json.audio_panel_hook),
-                    audio;
-
-            if (audioFile.length === 0) {
-                printDebug('Failed to find audio file.', true);
-                return;
-            }
-
-            // Create a new audio file.
-            audio = new Audio(audioFile);
-            // Set the volume.
-            audio.volume = getOptionSetting('audio-hook-volume', '1');
-            // Add an event handler.
-            $(audio).on('ended', function () {
-                audio.currentTime = 0;
-                isPlaying = false;
-            });
-            // Play the audio.
-            audio.play().catch(function (err) {
-                console.log(err);
-            });
-        } else {
-            isPlaying = false;
+        if (getOptionSetting('enableAudioHooks', getOptionSetting('allow-audio-hooks', 'false')) === 'false') {
+            return;
         }
+        const MEDIA_URL_BASE = '/config/audio-hooks/';
+
+        // Create a new audio file.
+        audioEl.src = MEDIA_URL_BASE + encodeURIComponent(chooseBestCandidate(json.audio_panel_hook));
+
+        let finalVolume = getOptionSetting('audioHookVolume', getOptionSetting('audio-hook-volume', '1'));
+
+        if (json.hasOwnProperty('audio_panel_volume') && json.audio_panel_volume >= 0.0) {
+            finalVolume = json.audio_panel_volume;
+        }
+
+        // Set the volume.
+        applyVolume(audioEl, finalVolume);
+
+        // Play the audio.
+        playAudio();
+    }
+
+    /*
+     * Handles emote messages
+     * @param json
+     * @returns {Promise<void>}
+     */
+    async function handleEmote(json) {
+        let amount = json.amount !== undefined ? json.amount : 1;
+        const animationName = json.animationName || 'flyUp';
+        const duration = json.duration || 10000;
+        const ignoreSleep = json.ignoreSleep || false;
+        const emoteCode = json.emoteCode !== undefined && json.emoteCode !== null ? json.emoteCode : json.emoteId;
+        for (let i = 0; i < amount; i++) {
+            displayEmote(json['emoteId'], json['provider'], animationName, duration, emoteCode);
+            if (!ignoreSleep) {
+                await sleep(getRandomInt(1, 200));
+            }
+        }
+    }
+
+    async function displayEmote(emoteId, provider, animationName, duration, emoteCode) {
+        if (getOptionSetting(CONF_ENABLE_FLYING_EMOTES, 'false') === 'false') {
+            // Feature not enabled, end the function
+            return;
+        }
+
+        // scaling of the emote (by width)
+        const size = getOptionSetting('flyingEmoteSize', 112);
+
+        const browserSafeId = emoteId.replace(/\W/g, '');
+
+        // a pseudo unique id to make sure, the keyframe names won't interfere each other
+        const uniqueId = `${Date.now()}${Math.random().toString(16).substr(2, 8)}`;
+
+        let emoteUrl;
+        switch (provider) {
+            case PROVIDER_TWITCH:
+                // Taken from the entry "emotes" on https://dev.twitch.tv/docs/irc/tags/#privmsg-twitch-tags
+                if (ignoredEmotes.twitch.includes(emoteId) || ignoredEmotes.twitch.includes(emoteCode)) {
+                    printDebug(`Ignoring Twitch emote '${emoteCode}'`);
+                    return;
+                }
+                emoteUrl = 'https://static-cdn.jtvnw.net/emoticons/v2/' + emoteId + '/default/dark/3.0';
+                break;
+            case PROVIDER_LOCAL:
+                if (ignoredEmotes.local.includes(emoteId) || ignoredEmotes.local.includes(emoteCode)) {
+                    printDebug(`Ignoring local emote '${emoteCode}'`);
+                    return;
+                }
+                emoteUrl = '/config/emotes/' + emoteId;
+                break;
+            case PROVIDER_MAXCDN:
+                if (ignoredEmotes.emoji.includes(emoteId) || ignoredEmotes.emoji.includes(emoteCode)) {
+                    printDebug(`Ignoring Emoji '${emoteCode}'`);
+                    return;
+                }
+                emoteUrl = `https://twemoji.maxcdn.com/v/latest/svg/${emoteId}.svg`;
+                break;
+            case PROVIDER_BTTV:
+                if (ignoredEmotes.bttv.includes(emoteId) || ignoredEmotes.bttv.includes(emoteCode)) {
+                    printDebug(`Ignoring BTTV emote '${emoteCode}'`);
+                    return;
+                }
+                emoteUrl = `https://cdn.betterttv.net/emote/${emoteId}/3x`;
+                break;
+            case PROVIDER_FFZ:
+                if (ignoredEmotes.ffz.includes(emoteId) || ignoredEmotes.ffz.includes(emoteCode)) {
+                    printDebug(`Ignoring FFZ emote '${emoteCode}'`);
+                    return;
+                }
+                emoteUrl = `https://cdn.frankerfacez.com/emoticon/${emoteId}/4`;
+                break;
+            case PROVIDER_SEVENTV:
+                if (ignoredEmotes.sevenTv.includes(emoteId) || ignoredEmotes.sevenTv.includes(emoteCode)) {
+                    printDebug(`Ignoring 7TV emote '${emoteCode}'`);
+                    return;
+                }
+                emoteUrl =  `https://cdn.7tv.app/emote/${emoteId}/4x.avif`;
+                break;
+            default:
+                printDebug(`Could not find emote '${emoteId}' with provider '${provider}'`);
+                return;
+        }
+
+        let emote = document.createElement('img');
+        emote.style.position = 'absolute';
+        emote.src = emoteUrl;
+        emote.width = size;
+        emote.id = `emote-${browserSafeId}-${uniqueId}`;
+        emote.dataset['browserSafeId'] = browserSafeId;
+        emote.dataset['uniqueId'] = uniqueId;
+        printDebug('Loading emote: ' + emote.src);
+        await emote.decode();
+        printDebug('Animating emote');
+
+        emote = document.getElementById('emotes-container').appendChild(emote);
+        if (animationName === 'flyUp') {
+            emoteFlyingUp(emote);
+        } else {
+            emoteAnimated(emote, animationName, duration);
+        }
+    }
+
+    function emoteAnimated(emote, animationName, duration) {
+        emote.style.top = getRandomInt(-5, 95) + 'vh';
+        emote.style.left = getRandomInt(-5, 95) + 'vw';
+        emote.classList.add('animated-emote');
+        emote.classList.add('animate__animated');
+        emote.classList.add('animate__' + animationName);
+        emote.classList.add('animate__infinite');
+
+        setTimeout(() => {
+            emote.remove();
+        }, duration);
+    }
+
+    function emoteFlyingUp(emote) {
+        // How long should the emotes fly over the screen?
+        const displayTime = 12 + Math.random() * 3;
+        // How long should one side-way iteration take
+        const sideWayDuration = 3 + Math.random();
+        // How much distance may the side-way movements take
+        // value is in vw (viewport width) -> screen percentage
+        const sideWayDistance = 3 + getRandomInt(0, 20);
+        // Spawn Range
+        const spawnRange = getRandomInt(0, 80);
+
+        const browserSafeId = emote.dataset['browserSafeId'];
+        const uniqueId = emote.dataset['uniqueId'];
+        const keyFrameFly = `emoteFly-${browserSafeId}-${uniqueId}`;
+        const keyFrameSideways = `emoteSideWays-${browserSafeId}-${uniqueId}`;
+        const keyFrameOpacity = `emoteOpacity-${browserSafeId}-${uniqueId}`;
+
+        let emoteAnimation = new Keyframes(emote);
+
+        Keyframes.define([{
+                name: keyFrameFly,
+                '0%': {transform: 'translate(' + spawnRange + 'vw, 100vh)'},
+                '100%': {transform: 'translate(' + spawnRange + 'vw, 0vh)'}
+            }]);
+
+        Keyframes.define([{
+                name: keyFrameSideways,
+                '0%': {marginLeft: '0'},
+                '100%': {marginLeft: sideWayDistance + 'vw'}
+            }]);
+
+        Keyframes.define([{
+                name: keyFrameOpacity,
+                '0%': {opacity: 0},
+                '40%': {opacity: 1},
+                '80%': {opacity: 1},
+                '90%': {opacity: 0},
+                '100%': {opacity: 0}
+            }]);
+
+        emoteAnimation.play([{
+                name: keyFrameFly,
+                duration: displayTime + 's',
+                timingFunction: 'ease-in'
+            }, {
+                name: keyFrameSideways,
+                duration: sideWayDuration + 's',
+                timingFunction: 'ease-in-out',
+                iterationCount: Math.round(displayTime / sideWayDuration),
+                direction: 'alternate' + (getRandomInt(0, 1) === 0 ? '-reverse' : '')
+            }, {
+                name: keyFrameOpacity,
+                duration: displayTime + 's',
+                timingFunction: 'ease-in'
+            }], {
+            onEnd: (event) => {
+                printDebug('Animation complete');
+                event.target.remove();
+            }
+        });
+    }
+
+    function handleVideoClip(json, MEDIA_URL_BASE, additionalText, additionalCSS) {
+        let defaultPath = '/config/clips/';
+        let filename = json.filename;
+        let duration = json.duration || null;
+        let fullscreen = json.fullscreen || false;
+        let volume = getOptionSetting(CONF_VIDEO_CLIP_VOLUME, '0.8');
+
+        if (MEDIA_URL_BASE) {
+            defaultPath = MEDIA_URL_BASE;
+            videoEl.setAttribute('style', additionalCSS);
+            volume = json.volume;
+        }
+
+        applyVolume(videoEl, volume);
+        videoEl.muted = false;
+        videoEl.src = defaultPath + encodeURIComponent(filename);
+        videoEl.style.display = "block";
+        
+        if (fullscreen) {
+            videoEl.className = 'fullscreen';
+        } else {
+            videoEl.className = 'fade-in';
+            if (additionalText) {
+                addAlertText(additionalText, additionalCSS)
+            }
+            duration -= fadeTime;
+            duration = Math.max((2*fadeTime), duration); //fade-in + fade-out anything less is not making much sense
+        }
+
+        
+
+        printDebug('Loading video: ' + videoEl.src);
+        printDebug('Playing video, duration: ' + videoEl.duration);
+
+        if (duration != null && duration > 0) {
+            playTimeout = setTimeout(() => {
+                printDebug('Video complete (duration), after: ' + (duration/1000) + ' seconds');
+                stopAllPlayingMedia();
+            }, duration);
+        }
+
+        playVideo();
     }
 
     function sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    /*
-     * @function Handles GIF alerts.
-     *
-     * @param {Object} json
-     */
-    async function handleGifAlert(json) {
-        // Make sure we can allow alerts.
-        if (getOptionSetting('allow-alerts', 'true') === 'true') {
-            let defaultPath = '/config/gif-alerts/',
-                    gifData = json.alert_image,
-                    gifDuration = 3000,
-                    gifVolume = getOptionSetting('gif-default-volume', '0.8'),
-                    gifFile = '',
-                    gifCss = '',
-                    gifText = '',
-                    htmlObj,
-                    audio,
-                    isVideo = false,
-                    hasAudio = false;
-
-            // If a comma is found, that means there are custom settings.
-            if (gifData.indexOf(',') !== -1) {
-                let gifSettingParts = gifData.split(',');
-
-                // Loop through each setting and set it if found.
-                gifSettingParts.forEach(function (value, index) {
-                    switch (index) {
-                        case 0:
-                            gifFile = value;
-                            break;
-                        case 1:
-                            gifDuration = (parseInt(value) * 1000);
-                            break;
-                        case 2:
-                            gifVolume = value;
-                            break;
-                        case 3:
-                            gifCss = value;
-                            break;
-                        case 4:
-                            gifText = value;
-                            break;
-                        default:
-                            gifText = gifText + ',' + value;
-                            break;
+    async function handleMacro(json) {
+        printDebug('Playing Macro: ' + json.macroName);
+        for (let i = 0; i < json.script.length; i++) {
+            let element = json.script[i];
+            switch (element.elementType) {
+                case 'clip':
+                    if (getOptionSetting(CONF_ENABLE_VIDEO_CLIPS, 'true') === 'true') {
+                        handleVideoClip(element);
                     }
-                });
-            } else {
-                gifFile = gifData;
+                    break;
+                case 'emote':
+                    element.emoteId = element.emoteId !== undefined ? element.emoteId.toString() : element.emotetext;
+                    await handleEmote(element);
+                    break;
+                case 'pause':
+                    await sleep(element.duration);
+                    break;
+                case 'text':
+                    handleText(element);
+                    break;
+                case 'sound':
+                    if (getOptionSetting('enableAudioHooks', getOptionSetting('allow-audio-hooks', 'false')) === 'true') {
+                        handleAudioHook({audio_panel_hook: element.filename, duration: element.duration});
+                    }
+                    break;
             }
-
-            // Check if the file is a gif, or video.
-            if (gifFile.match(/\.(webm|mp4|ogg|ogv)$/) !== null) {
-                htmlObj = $('<video/>', {
-                    'src': defaultPath + gifFile,
-                    'autoplay': 'false',
-                    'style': gifCss,
-                    'preload': 'auto'
-                });
-
-                htmlObj.prop('volume', gifVolume);
-                isVideo = true;
-
-                if (!supportsVideoType(gifFile.substring(gifFile.lastIndexOf('.') + 1)) !== '') {
-                    printDebug('Video format was not supported by the browser!', true);
-                }
-            } else {
-                htmlObj = $('<img/>', {
-                    'src': defaultPath + gifFile,
-                    'style': gifCss,
-                    'alt': "Video"
-                });
-            }
-
-            let audioPath = getAudioFile(gifFile.substr(0, gifFile.indexOf('.')), defaultPath);
-
-            if (audioPath.length > 0 && gifFile.substring(gifFile.lastIndexOf('.') + 1) !== audioPath.substring(audioPath.lastIndexOf('.') + 1)) {
-                hasAudio = true;
-                audio = new Audio(audioPath);
-            }
-
-            // p obeject to hold custom gif alert text and style
-            textObj = $('<p/>', {
-                'style': gifCss
-            }).text(gifText);
-
-            await sleep(1000);
-
-            // Append the custom text object to the page
-            $('#alert-text').append(textObj).fadeIn(1e2).delay(gifDuration)
-                    .fadeOut(1e2, function () { //Remove the text with a fade out.
-                        let t = $(this);
-
-                        // Remove the p tag
-                        t.find('p').remove();
-                    });
-
-            // Append a new the image.
-            $('#alert').append(htmlObj).fadeIn(1e2, function () {// Set the volume.
-                if (isVideo) {
-                    // Play the sound.
-                    htmlObj[0].play().catch(function () {
-                        // Ignore.
-                    });
-                }
-                if (hasAudio) {
-                    audio.volume = gifVolume;
-                    audio.play().catch(function () {
-                        // Ignore.
-                    });
-                }
-            }).delay(gifDuration) // Wait this time before removing this image.
-                    .fadeOut(1e2, function () { // Remove the image with a fade out.
-                        let t = $(this);
-
-                        // Remove either the img tag or video tag.
-                        if (!isVideo) {
-                            // Remove the image.
-                            t.find('img').remove();
-                        } else {
-                            // Remove the video.
-                            t.find('video').remove();
-                        }
-
-                        if (hasAudio) {
-                            // Stop the audio.
-                            audio.pause();
-                            // Reset the duration.
-                            audio.currentTime = 0;
-                        }
-                        if (isVideo) {
-                            htmlObj[0].pause();
-                            htmlObj[0].currentTime = 0;
-                        }
-                        // Mark as done playing.
-                        isPlaying = false;
-                    });
-        } else {
-            isPlaying = false;
         }
+        printDebug('Finished playing macro: ' + json.macroName);
+    }
+
+    /**
+     * Generates a random number between the given min and max
+     * @param min the minimum value
+     * @param max the maximum value
+     * @returns {number} a random number
+     */
+    function getRandomInt(min, max) {
+        min = Math.ceil(min);
+        max = Math.floor(max);
+        return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
     /*
@@ -456,20 +1108,13 @@ $(function () {
                     if (message.authresult === 'true') {
                         printDebug('Successfully authenticated with the socket.', true);
                         // Handle this.
-                        handleBrowserInteraction()
+                        handleBrowserInteraction();
                     } else {
                         printDebug('Failed to authenticate with the socket.', true);
                     }
-                } else
-
-                // Queue all events and process them one at-a-time.
-                if (message.alert_image !== undefined || message.audio_panel_hook !== undefined) {
+                } else {
+                    // Queue all events and process them one at-a-time.
                     queue.push(message);
-                }
-
-                // Message cannot be handled error.
-                else {
-                    printDebug('Failed to process message from socket: ' + rawMessage);
                 }
             }
         } catch (ex) {
@@ -477,6 +1122,24 @@ $(function () {
         }
     };
 
+    fadeTime = getOptionSetting(CONF_FADE_DURTAION, 3e2);
+    document.querySelector(':root').style.setProperty('--fade-time', fadeTime + 'ms');
+
     // Handle processing the queue.
     setInterval(handleQueue, 5e2);
+    audioEl.onended = () => { 
+        printDebug('Audio complete (fully played), after: ' + audioEl.duration + ' seconds');
+
+        if (!hasCustomDuration && getOptionSetting(CONF_STOP_GIF_WITH_AUDIO, 'false') === 'true' && isPlayingBit(PLAYBACK_TYPE.GIF)) {
+            printDebug('Gif complete (StopGifWithAudio enabled & Audio fully played), after: ' + audioEl.duration + ' seconds');
+            stopAllPlayingMedia();
+            return; 
+        }
+
+        stopAudio();
+    };
+    videoEl.onended = () => {
+        printDebug('Video complete (fully played), after: ' + videoEl.duration + ' seconds');
+        stopVideo();
+    };
 });

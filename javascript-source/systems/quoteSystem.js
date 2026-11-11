@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,8 +22,8 @@
  */
 (function() {
 
-    var quoteMode = $.getSetIniDbBoolean('settings', 'quoteMode', true),
-        isDeleting = false;
+    let quoteMode = $.getSetIniDbBoolean('settings', 'quoteMode', true),
+        isRenumbering = false;
 
     /**
      * @function updateQuote
@@ -47,16 +47,49 @@
      * @returns {Number}
      */
     function saveQuote(username, quote) {
-        var newKey = $.inidb.GetKeyList('quotes', '').length,
-            game = ($.getGame($.channelName) != '' ? $.getGame($.channelName) : "Some Game");
+        let newKey = $.getSetIniDbNumber('settings', 'quoteNextId', 0),
+            game = (!$.javaString($.getGame($.channelName)).isBlank() ? $.getGame($.channelName) : "Some Game");
 
-        if ($.inidb.exists('quotes', newKey)) {
+        while ($.inidb.exists('quotes', newKey)) {
             newKey++;
         }
+
         quote = String(quote).replace(/"/g, '\'\'');
         $.inidb.set('quotes', newKey, JSON.stringify([username, quote, $.systemTime(), game + '']));
+        $.setIniDbNumber('settings', 'quoteNextId', newKey + 1);
         $.panelsocketserver.sendJSONToAll(JSON.stringify({"query_id": "quote_update", "results": "update"}));
         return newKey;
+    }
+
+    function sortCompare(a, b) {
+        let numA = parseInt(a),
+            numB = parseInt(b);
+
+        return numA - numB;
+    }
+
+    function renumberQuotes() {
+        if (isRenumbering) {
+            return;
+        }
+        isRenumbering = true;
+        let quoteKeys = $.inidb.GetKeyList('quotes', ''),
+        quotes = [],
+        i;
+
+        quoteKeys.sort(sortCompare);
+
+        for (i in quoteKeys) {
+            quotes.push($.getIniDbString('quotes', quoteKeys[i]));
+            $.inidb.del('quotes', quoteKeys[i]);
+        }
+
+        for (i in quotes) {
+            $.inidb.set('quotes', i, quotes[i]);
+        }
+
+        $.inidb.set('settings', 'quoteNextId', quotes.length);
+        isRenumbering = false;
     }
 
     /**
@@ -65,73 +98,66 @@
      * @returns {Number}
      */
     function deleteQuote(quoteId) {
-        var quoteKeys,
-            quotes = [],
-            i;
-
-        if (isDeleting) {
+        if (isRenumbering) {
             return -1;
         }
 
         if ($.inidb.exists('quotes', quoteId)) {
-            isDeleting = true;
             $.inidb.del('quotes', quoteId);
-            quoteKeys = $.inidb.GetKeyList('quotes', '');
 
-            
-            for (i in quoteKeys) {
-                quotes.push($.inidb.get('quotes', quoteKeys[i]));
-                $.inidb.del('quotes', quoteKeys[i]);
+            if ($.getSetIniDbBoolean('settings', 'quoteRenumberAfterDelete', true)) {
+                renumberQuotes();
             }
 
-            for (i in quotes) {
-                $.inidb.set('quotes', i, quotes[i]);
-            }
-            
-            isDeleting = false;
+            let quotes = $.inidb.GetKeyList('quotes', '');
+
             $.panelsocketserver.sendJSONToAll(JSON.stringify({"query_id": "quote_update", "results": "update"}));
             return (quotes.length ? quotes.length : 0);
-        } else {
-            return -1;
         }
+
+        return -1;
     }
 
     /**
      * @function getQuote
-     * @param {String} quoteId: id or search query
+     * @param quoteId id or search query
      * @returns {Array}
      */
     function getQuote(quoteId) {
-        var quote;
+        let quote;
 
         if (!quoteId) {
-            quoteId = $.rand($.inidb.GetKeyList('quotes', '').length);
+            quoteId = $.randElement($.inidb.GetKeyList('quotes', ''));
         } else if (isNaN(quoteId)) {
             quoteId = String(quoteId).toLowerCase();
-            var quotes = $.inidb.GetKeyValueList('quotes', '');
-            var ids = [];
+            let quotes = $.inidb.GetKeyValueList('quotes', '');
+            let ids = [];
+            let searchids = [];
             for (var i = 0; i < quotes.length; i++) {
+                ids.push(quotes[i].getKey());
                 if (String(quotes[i].getValue()).toLowerCase().indexOf(quoteId) >= 0) {
-                    ids.push(quotes[i].getKey());
+                    searchids.push(quotes[i].getKey());
                 }
             }
-            quoteId = ids.length > 0 ? $.randElement(ids) : $.rand(quotes.length);
+            quoteId = searchids.length > 0 ? $.randElement(searchids) : $.randElement(ids);
         }
 
-        if ($.inidb.exists('quotes', quoteId)) {
-            quote = JSON.parse($.inidb.get('quotes', quoteId));
+        quote = $.optIniDbString('quotes', quoteId);
+        if (quote.isPresent()) {
+            quote = JSON.parse(quote.get());
             quote.push(quoteId);
             return quote;
-        } else {
-            return [];
         }
+
+        return [];
     }
 
     /**
      * @event command
+     * @param event
      */
     $.bind('command', function(event) {
-        var sender = event.getSender(),
+        let sender = event.getSender(),
             command = event.getCommand(),
             args = event.getArgs(),
             quote,
@@ -140,7 +166,7 @@
         /**
          * @commandpath editquote [id] [user|game|quote] [text] - Edit quotes.
          */
-        if (command.equalsIgnoreCase("editquote")) {
+        if ($.equalsIgnoreCase(command, "editquote")) {
             if (args.length < 3) {
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.edit.usage'));
                 return;
@@ -148,81 +174,85 @@
 
             quote = getQuote(args[0]);
             if (quote.length > 0) {
-                if (args[1].equalsIgnoreCase("user")) {
+                if ($.equalsIgnoreCase(args[1], "user")) {
                     $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.edit.user.success', args[0], args[2]));
                     quote[0] = args[2];
                     updateQuote(args[0], quote);
-                } else if (args[1].equalsIgnoreCase("game")) {
+                } else if ($.equalsIgnoreCase(args[1], "game")) {
                     $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.edit.game.success', args[0], args.splice(2).join(' ')));
                     quote[3] = args.splice(2).join(' ');
                     updateQuote(args[0], quote);
-                } else if (args[1].equalsIgnoreCase("quote")) {
+                } else if ($.equalsIgnoreCase(args[1], "quote")) {
                     $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.edit.quote.success', args[0], args.splice(2).join(' ')));
                     quote[1] = args.splice(2).join(' ');
                     updateQuote(args[0], quote);
                 } else {
                     $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.edit.usage'));
                 }
-            } else {
-                $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.edit.404'));
+                return;
             }
 
+            $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.edit.404'));
             $.log.event(sender + ' edited quote #' + quote);
+            return;
         }
 
         /**
          * @commandpath quotemodetoggle - toggle between !addquote function modes
          */
-        if (command.equalsIgnoreCase('quotemodetoggle')) {
+        if ($.equalsIgnoreCase(command, 'quotemodetoggle')) {
             if (quoteMode) {
                 quoteMode = false;
                 $.inidb.set('settings', 'quoteMode', 'false');
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.add.usage2'));
                 return;
-            } else {
-                quoteMode = true;
-                $.inidb.set('settings', 'quoteMode', 'true');
-                $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.add.usage1'));
-                return;
             }
+
+            quoteMode = true;
+            $.inidb.set('settings', 'quoteMode', 'true');
+            $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.add.usage1'));
+            return;
+
         }
 
         /**
          * @commandpath addquote [quote text] - Save a quote
          */
-        if (command.equalsIgnoreCase('addquote')) {
+        if ($.equalsIgnoreCase(command, 'addquote')) {
             if (quoteMode) {
                 if (args.length < 1) {
                     $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.add.usage1'));
                     return;
                 }
+
                 quote = args.splice(0).join(' ');
-                $.say($.lang.get('quotesystem.add.success', $.username.resolve(sender), saveQuote(String($.username.resolve(sender)), quote)));
-                $.log.event(sender + ' added a quote "' + quote + '".');
-                return;
-            } else {
-                if (args.length < 2) {
-                    $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.add.usage2'));
-                    return;
-                }
-                var useTwitchNames = ($.inidb.exists('settings', 'quoteTwitchNamesToggle')) ? $.inidb.get('settings', 'quoteTwitchNamesToggle') == "true" : true;
-                var target = useTwitchNames ? args[0].toLowerCase() : args[0].substring(0, 1).toUpperCase() + args[0].substring(1).toLowerCase();
-                if (useTwitchNames && !$.user.isKnown(target)) {
-                    $.say($.whisperPrefix(sender) + $.lang.get('common.user.404', target));
-                    return;
-                }
-                quote = args.splice(1).join(' ');
-                var username = useTwitchNames ? $.username.resolve(target) : target;
-                $.say($.lang.get('quotesystem.add.success', username, saveQuote(String(username), quote)));
+                $.say($.lang.get('quotesystem.add.success', $.viewer.getByLogin(sender).name(), saveQuote(String($.viewer.getByLogin(sender).name()), quote)));
                 $.log.event(sender + ' added a quote "' + quote + '".');
                 return;
             }
+            if (args.length < 2) {
+                $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.add.usage2'));
+                return;
+            }
+
+            let useTwitchNames = $.getIniDbBoolean('settings', 'quoteTwitchNamesToggle', true);
+            let target = useTwitchNames ? args[0].toLowerCase() : args[0].substring(0, 1).toUpperCase() + args[0].substring(1).toLowerCase();
+            if (useTwitchNames && !$.user.isKnown(target)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('common.user.404', target));
+                return;
+            }
+
+            quote = args.splice(1).join(' ');
+            let username = useTwitchNames ? $.viewer.getByLogin(target).name() : target;
+            $.say($.lang.get('quotesystem.add.success', username, saveQuote(String(username), quote)));
+            $.log.event(sender + ' added a quote "' + quote + '".');
+            return;
         }
 
         /**
          * USED BY THE PANEL
          */
-        if (command.equalsIgnoreCase('addquotesilent')) {
+        if ($.equalsIgnoreCase(command, 'addquotesilent')) {
             if (!$.isBot(sender)) {
                 return;
             }
@@ -231,64 +261,76 @@
             }
 
             quote = args.splice(0).join(' ');
-            saveQuote(String($.username.resolve(sender)), quote);
+            saveQuote(String($.viewer.getByLogin(sender).name()), quote);
+            return;
         }
 
         /**
          * @commandpath delquote [quoteId] - Delete a quote
          */
-        if (command.equalsIgnoreCase('delquote')) {
+        if ($.equalsIgnoreCase(command, 'delquote')) {
             if (!args[0] || isNaN(args[0])) {
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.del.usage'));
                 return;
             }
 
-            var newCount;
+            let newCount;
 
             if ((newCount = deleteQuote(args[0])) >= 0) {
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.del.success', args[0], newCount));
-            } else {
-                $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.del.404', args[0]));
+                $.log.event(sender + ' removed quote with id: ' + args[0]);
+                return;
             }
 
-            $.log.event(sender + ' removed quote with id: ' + args[0]);
+            $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.del.404', args[0]));
+            return;
         }
 
         /**
          * USED BY THE PANEL
          */
-        if (command.equalsIgnoreCase('delquotesilent')) {
+        if ($.equalsIgnoreCase(command, 'delquotesilent')) {
             if (!$.isBot(sender)) {
                 return;
             }
 
-            var newCount;
-
-            if ((newCount = deleteQuote(args[0])) >= 0) {} else {}
+            if (deleteQuote(args[0]) >= 0) {
+                $.log.event(sender + ' removed quote with id: ' + args[0]);
+            }
+            return;
         }
 
         /**
          * @commandpath quote [quoteId] - Announce a quote by its Id, omit the id parameter to get a random quote
          */
-        if (command.equalsIgnoreCase('quote')) {
+        if ($.equalsIgnoreCase(command, 'quote')) {
             quote = getQuote(args[0]);
             if (quote.length > 0) {
-                quoteStr = ($.inidb.exists('settings', 'quoteMessage') ? $.inidb.get('settings', 'quoteMessage') : $.lang.get('quotesystem.get.success'));
-                quoteStr = quoteStr.replace('(id)', (quote.length == 5 ? quote[4].toString() : quote[3].toString())).
-                replace('(quote)', quote[1]).
-                replace('(user)', $.resolveRank(quote[0])).
-                replace('(game)', (quote.length == 5 ? quote[3] : "Some Game")).
-                replace('(date)', $.getLocalTimeString('dd-MM-yyyy', parseInt(quote[2])));
+                let user = $.viewer.getByLogin(quote[0]);
+                if (user == null) {
+                    user = quote[0];
+                } else {
+                    user = user.name();
+                }
+                quoteStr = $.getIniDbString('settings', 'quoteMessage', $.lang.get('quotesystem.get.success'));
+                quoteStr = quoteStr.replace('(id)', (quote.length === 5 ? quote[4].toString() : quote[3].toString()))
+                                    .replace('(quote)', quote[1])
+                                    .replace('(userrank)', $.resolveRank(quote[0]))
+                                    .replace('(user)', user)
+                                    .replace('(game)', (quote.length === 5 ? quote[3] : "Some Game"))
+                                    .replace('(date)', $.getLocalTimeString($.getSetIniDbString('settings', 'quoteDateFormat', 'dd-MM-yyyy'), parseInt(quote[2])));
                 $.say(quoteStr);
             } else {
-                $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.get.404', (typeof args[0] != 'undefined' ? args[0] : '')));
+                $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.get.404', (typeof args[0] !== 'undefined' ? args[0] : '')));
             }
+
+            return;
         }
 
         /**
-         * @commandpath quotemessage [message] - Sets the quote string with tags: (id) (quote) (user) (game) (date)
+         * @commandpath quotemessage [message] - Sets the quote string with tags: (id) (quote) (user) (userrank) (game) (date)
          */
-        if (command.equalsIgnoreCase('quotemessage')) {
+        if ($.equalsIgnoreCase(command, 'quotemessage')) {
             if (!args[0]) {
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.quotemessage.usage'));
                 return;
@@ -298,45 +340,85 @@
             $.inidb.set('settings', 'quoteMessage', quoteStr);
             $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.quotemessage.success'));
             $.log.event(sender + ' changed the quote message to: ' + quoteStr);
+            return;
+        }
+
+        /**
+         * @commandpath quotedateformat [format] - Sets the date format for the (date) tag in a quote
+         */
+        if ($.equalsIgnoreCase(command, 'quotedateformat')) {
+            if (!args[0]) {
+                $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.quotedateformat.usage', $.getSetIniDbString('settings', 'quoteDateFormat', 'dd-MM-yyyy')));
+                return;
+            }
+
+            quoteStr = args.splice(0).join(' ');
+            $.inidb.set('settings', 'quoteDateFormat', quoteStr);
+            $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.quotedateformat.success'));
+            $.log.event(sender + ' changed the quote date format to: ' + quoteStr);
+            return;
         }
 
         /**
          * @commandpath searchquote [string] - Searches the quotes for a string and returns a list of IDs
          */
-        if (command.equalsIgnoreCase('searchquote')) {
+        if ($.equalsIgnoreCase(command, 'searchquote')) {
             if (!args[0]) {
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.searchquote.usage'));
                 return;
             }
-            var searchString = args.join(' ');
-            if (searchString.length < 5) {
+
+            let searchString = args.join(' ');
+            if (searchString.length < 1) {
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.searchquote.usage'));
                 return;
             }
 
-            var matchingKeys = $.inidb.searchByValue('quotes', searchString);
-            if (matchingKeys.length == 0) {
+            let matchingKeys = $.inidb.searchByValue('quotes', searchString);
+            if (matchingKeys.length === 0) {
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.searchquote.404'));
                 return;
             }
 
             $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.searchquote.found', matchingKeys.join(', ')));
+            return;
         }
 
         /**
          * @commandpath quotetwitchnamestoggle - Toggles on and off if quote names need to have been seen in chat before
          */
-        if (command.equalsIgnoreCase('quotetwitchnamestoggle')) {
-            var useTwitchNames = $.inidb.get('settings', 'quoteTwitchNamesToggle') == "true";
+        if ($.equalsIgnoreCase(command, 'quotetwitchnamestoggle')) {
+            let useTwitchNames = $.getIniDbBoolean('settings', 'quoteTwitchNamesToggle');
             if (useTwitchNames) {
                 useTwitchNames = false;
                 $.inidb.set('settings', 'quoteTwitchNamesToggle', 'false');
                 $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.twitchnames-disabled'));
-            } else {
-                useTwitchNames = true;
-                $.inidb.set('settings', 'quoteTwitchNamesToggle', 'true');
-                $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.twitchnames-enabled'));
+                return;
             }
+
+            useTwitchNames = true;
+            $.inidb.set('settings', 'quoteTwitchNamesToggle', 'true');
+            $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.twitchnames-enabled'));
+            return;
+        }
+
+        /**
+         * @commandpath quoterenumberingtoggle - Toggles on and off if quotes should be renumbered after deletion
+         */
+        if ($.equalsIgnoreCase(command, 'quoterenumberingtoggle')) {
+            let renumberQuotes = $.getIniDbBoolean('settings', 'quoteRenumberAfterDelete', true);
+            $.setIniDbBoolean('settings', 'quoteRenumberAfterDelete', !renumberQuotes);
+            $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.renumbering', $.lang.get('common.' + (!renumberQuotes ? 'enabled' : 'disabled'))));
+            return;
+        }
+
+        /**
+         * @commandpath quotedorenumbering - Renumbers all quotes to be sequential starting at 0
+         */
+        if ($.equalsIgnoreCase(command, 'quotedorenumbering')) {
+            renumberQuotes();
+            $.say($.whisperPrefix(sender) + $.lang.get('quotesystem.dorenumbering'));
+            return;
         }
     });
 
@@ -344,15 +426,18 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./systems/quoteSystem.js', 'quotemodetoggle', 2);
-        $.registerChatCommand('./systems/quoteSystem.js', 'searchquote', 7);
-        $.registerChatCommand('./systems/quoteSystem.js', 'addquote', 2);
-        $.registerChatCommand('./systems/quoteSystem.js', 'addquotesilent', 1);
-        $.registerChatCommand('./systems/quoteSystem.js', 'delquote', 2);
-        $.registerChatCommand('./systems/quoteSystem.js', 'delquotesilent', 1);
-        $.registerChatCommand('./systems/quoteSystem.js', 'editquote', 2);
+        $.registerChatCommand('./systems/quoteSystem.js', 'quotemodetoggle', $.PERMISSION.Mod);
+        $.registerChatCommand('./systems/quoteSystem.js', 'searchquote', $.PERMISSION.Viewer);
+        $.registerChatCommand('./systems/quoteSystem.js', 'addquote', $.PERMISSION.Mod);
+        $.registerChatCommand('./systems/quoteSystem.js', 'addquotesilent', $.PERMISSION.Admin);
+        $.registerChatCommand('./systems/quoteSystem.js', 'delquote', $.PERMISSION.Mod);
+        $.registerChatCommand('./systems/quoteSystem.js', 'delquotesilent', $.PERMISSION.Admin);
+        $.registerChatCommand('./systems/quoteSystem.js', 'editquote', $.PERMISSION.Mod);
         $.registerChatCommand('./systems/quoteSystem.js', 'quote');
-        $.registerChatCommand('./systems/quoteSystem.js', 'quotemessage', 1);
-        $.registerChatCommand('./systems/quoteSystem.js', 'quotetwitchnamestoggle', 1);
+        $.registerChatCommand('./systems/quoteSystem.js', 'quotemessage', $.PERMISSION.Admin);
+        $.registerChatCommand('./systems/quoteSystem.js', 'quotedateformat', $.PERMISSION.Admin);
+        $.registerChatCommand('./systems/quoteSystem.js', 'quotetwitchnamestoggle', $.PERMISSION.Admin);
+        $.registerChatCommand('./systems/quoteSystem.js', 'quoterenumberingtoggle', $.PERMISSION.Admin);
+        $.registerChatCommand('./systems/quoteSystem.js', 'quotedorenumbering', $.PERMISSION.Admin);
     });
 })();

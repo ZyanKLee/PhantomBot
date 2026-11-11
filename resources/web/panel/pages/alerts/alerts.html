@@ -1,5 +1,5 @@
 <!--
-    Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+    Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -78,35 +78,6 @@
                     </form>
                 </div>
             </div>
-
-            <!-- Host Alerts -->
-            <div class="col-md-4">
-                <div class="box box-solid">
-                    <div class="box-header with-border">
-                        <div class="box-tools pull-right">
-                           <label class="switch" data-toggle="tooltip" title="Module toggle.">
-                               <input type="checkbox" id="hostHandlerToggle" data-alert-toggle="./handlers/hostHandler.js" checked>
-                               <span class="slider round"></span>
-                            </label>
-
-                            <button type="button" id="hostHandlerSettings" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;">
-                                <i class="fa fa-cog fa-lg"></i>
-                            </button>
-                        </div>
-                        <h3 class="box-title">Host Alerts</h3>
-                    </div>
-
-                    <form role="form">
-                        <!-- Box content -->
-                        <div class="box-body">
-                            <p class="auto-cut">Welcome and also reward users who host your channel.</p>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <div class="row">
             <!-- Bits Alerts -->
             <div class="col-md-4">
                 <div class="box box-solid">
@@ -133,6 +104,9 @@
                 </div>
             </div>
 
+        </div>
+
+        <div class="row">
             <!-- Clips Alerts -->
             <div class="col-md-4">
                 <div class="box box-solid">
@@ -184,34 +158,6 @@
                     </form>
                 </div>
             </div>
-        </div>
-
-        <div class="row">
-            <!-- Greeting Alerts -->
-            <div class="col-md-4">
-                <div class="box box-solid">
-                    <div class="box-header with-border">
-                        <div class="box-tools pull-right">
-                           <label class="switch" data-toggle="tooltip" title="Module toggle.">
-                               <input type="checkbox" id="greetingSystemToggle" data-alert-toggle="./systems/greetingSystem.js" checked>
-                               <span class="slider round"></span>
-                            </label>
-
-                            <button type="button" id="greetingSystemSettings" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;">
-                                <i class="fa fa-cog fa-lg"></i>
-                            </button>
-                        </div>
-                        <h3 class="box-title">Greeting Alerts</h3>
-                    </div>
-
-                    <form role="form">
-                        <!-- Box content -->
-                        <div class="box-body">
-                            <p class="auto-cut">Let users set a custom message to be said in the chat when they join.</p>
-                        </div>
-                    </form>
-                </div>
-            </div>
 
             <!-- Welcom Alerts -->
             <div class="col-md-4">
@@ -239,6 +185,9 @@
                 </div>
             </div>
 
+        </div>
+
+        <div class="row">
             <!-- StreamLabs Alerts -->
             <div class="col-md-4">
                 <div class="box box-solid">
@@ -249,6 +198,9 @@
                                <span class="slider round"></span>
                             </label>
 
+                            <button type="button" id="streamlabsLink" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;" data-removeForNonConfigUser="true">
+                                <i class="fa fa-link fa-lg"></i>
+                            </button>
                             <button type="button" id="donationHandlerSettings" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;">
                                 <i class="fa fa-cog fa-lg"></i>
                             </button>
@@ -260,34 +212,6 @@
                         <!-- Box content -->
                         <div class="box-body">
                             <p class="auto-cut">Thank and also reward users who send you a tip with StreamLabs.</p>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <div class="row">
-            <!-- TipeeeStream Alerts -->
-            <div class="col-md-4">
-                <div class="box box-solid">
-                    <div class="box-header with-border">
-                        <div class="box-tools pull-right">
-                            <label class="switch" data-toggle="tooltip" title="Module toggle.">
-                                <input type="checkbox" id="tipeeeStreamHandlerToggle" data-alert-toggle="./handlers/tipeeeStreamHandler.js" checked>
-                                <span class="slider round"></span>
-                            </label>
-
-                            <button type="button" id="tipeeeStreamHandlerSettings" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;">
-                                <i class="fa fa-cog fa-lg"></i>
-                            </button>
-                        </div>
-                        <h3 class="box-title">TipeeeStream Alerts</h3>
-                    </div>
-
-                    <form role="form">
-                        <!-- Box content -->
-                        <div class="box-body">
-                            <p class="auto-cut">Thank and also reward users who send you a tip with TipeeeStream.</p>
                         </div>
                     </form>
                 </div>
@@ -318,28 +242,59 @@
                     </form>
                 </div>
             </div>
-
-            <!-- Twitter Alerts -->
+            <!-- TipeeeStream Alerts -->
             <div class="col-md-4">
                 <div class="box box-solid">
                     <div class="box-header with-border">
                         <div class="box-tools pull-right">
-                           <label class="switch" data-toggle="tooltip" title="Module toggle.">
-                               <input type="checkbox" id="twitterHandlerToggle" data-alert-toggle="./handlers/twitterHandler.js" checked>
-                               <span class="slider round"></span>
+                            <label class="switch" data-toggle="tooltip" title="Module toggle.">
+                                <input type="checkbox" id="tipeeeStreamHandlerToggle" data-alert-toggle="./handlers/tipeeeStreamHandler.js" checked>
+                                <span class="slider round"></span>
                             </label>
 
-                            <button type="button" id="twitterHandlerSettings" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;">
+                            <button type="button" id="tipeeeStreamHandlerSettings" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;">
                                 <i class="fa fa-cog fa-lg"></i>
                             </button>
                         </div>
-                        <h3 class="box-title">Twitter Alerts</h3>
+                        <h3 class="box-title">TipeeeStream Alerts</h3>
                     </div>
 
                     <form role="form">
                         <!-- Box content -->
                         <div class="box-body">
-                            <p class="auto-cut">Keep your chat updated with your Tweets and let the bot Tweet when you go live.</p>
+                            <p class="auto-cut">Thank and also reward users who send you a tip with TipeeeStream.</p>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="row">
+            <!-- Bluesky Alerts -->
+            <div class="col-md-4">
+                <div class="box box-solid">
+                    <div class="box-header with-border">
+                        <div class="box-tools pull-right">
+                            <label class="switch" data-toggle="tooltip" title="Module toggle.">
+                                <input type="checkbox" id="blueskyHandlerToggle" data-alert-toggle="./handlers/blueskyHandler.js" checked>
+                                <span class="slider round"></span>
+                            </label>
+
+                            <button type="button" id="blueskyLink" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;" data-removeForNonConfigUser="true">
+                                <i class="fa fa-link fa-lg"></i>
+                            </button>
+                            <button type="button" id="blueskyHandlerSettings" class="btn btn-md btn-box-tool" style="margin-bottom: 7px;">
+                                <i class="fa fa-cog fa-lg"></i>
+                            </button>
+                        </div>
+                        <h3 class="box-title">Bluesky Alerts</h3>
+                    </div>
+
+                    <form role="form">
+                        <!-- Box content -->
+                        <div class="box-body">
+                            <p class="auto-cut">Share your Bluesky activity in chat and post when you go live.</p>
                         </div>
                     </form>
                 </div>

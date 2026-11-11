@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,18 +16,12 @@
  */
 package com.gmt2001.httpwsserver;
 
-import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.ServerSocket;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.KeyPair;
@@ -42,11 +36,28 @@ import java.security.UnrecoverableKeyException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
-import java.util.Calendar;
-import java.util.Date;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
+
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManagerFactory;
+
+import com.gmt2001.PathValidator;
+import com.gmt2001.Console.err;
+import com.gmt2001.dns.EventLoopDetector;
+import com.gmt2001.httpwsserver.x509.SelfSignedX509CertificateGenerator;
+import com.gmt2001.util.concurrent.ExecutorService;
+
+import io.netty.bootstrap.ServerBootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.EventLoopGroup;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.util.IllegalReferenceCountException;
+import io.netty.util.ReferenceCounted;
+import tv.phantombot.CaselessProperties;
 import tv.phantombot.PhantomBot;
 
 /**
@@ -59,11 +70,29 @@ public final class HTTPWSServer {
     /**
      * An instance of {@link HTTPWSServer}
      */
-    private static HTTPWSServer INSTANCE;
+    private static final HTTPWSServer INSTANCE = new HTTPWSServer();
+
+    public static final String HEADER_X_FORWARDED_HOST = "X-Forwarded-Host";
+    public static final String HEADER_CF_RAY = "CF-Ray";
+
+    /**
+     * Releases a {@link ReferenceCounted} object
+     *
+     * @param obj The object to release
+     */
+    public static void releaseObj(ReferenceCounted obj) {
+        try {
+            if (obj != null && obj.refCnt() > 0) {
+                obj.release();
+            }
+        } catch (IllegalReferenceCountException ex) {
+            err.printStackTrace(ex);
+        }
+    }
     /**
      * The server's {@link EventLoopGroup}
      */
-    private final EventLoopGroup group = new NioEventLoopGroup();
+    private final EventLoopGroup group = EventLoopDetector.createEventLoopGroup();
     /**
      * The server's listen {@link Channel}
      */
@@ -76,158 +105,318 @@ public final class HTTPWSServer {
     private boolean sslEnabled = false;
     private boolean autoSSL = false;
     private SslContext sslCtx;
-    private KeyStore ks = null;
-    private String sslFile = null;
-    private String sslPass = null;
-    private Date nextAutoSslCheck = new Date();
+    private Instant nextAutoSslCheck = Instant.now();
+    private Instant lastSslModified = Instant.MIN;
+    private Instant lastSslKeyModified = Instant.MIN;
+    private static final String AUTOSSLKEYALIAS = "phantombot";
+    private static final String AUTOSSLFILE = "./config/selfkey.jks";
+    private static final String AUTOSSLPASSWORD = "pbselfsign";
+    private boolean regeneratingFailedAutoSsl = false;
 
     /**
-     * Gets the server instance.
-     *
-     * You should always call the parameterized version, {@link HTTPWSServer#instance(String, int, boolean, String, String)}, at least once before
-     * this one
+     * Gets the server instance
      *
      * @return An initialized {@link HTTPWSServer}
      */
     public static HTTPWSServer instance() {
-        return instance(null, 25000, false, null, null, null);
-    }
-
-    /**
-     * Gets the server instance, or initializes a new one if it hasn't been constructed yet
-     *
-     * @param ipOrHostname The IP or Hostname of an interface to bind to. null for the default AnyAddress
-     * @param port The port number to bind to
-     * @param useHttps If SSL should be used.
-     * @param sslFile The path to a Java Keystore (.jks) file that contains a Private Key and Certificate Trust Chain or {@code null} to disable
-     * SSL/TLS support
-     * @param sslPass The password to the .jks file specified in {@code sslFile} or {@code null} if not needed or not using SSL/TLS support
-     * @return An initialized {@link HTTPWSServer}
-     */
-    public static synchronized HTTPWSServer instance(String ipOrHostname, int port, boolean useHttps, String sslFile, String sslPass, String botName) {
-        if (INSTANCE == null) {
-            INSTANCE = new HTTPWSServer(ipOrHostname, port, useHttps, sslFile, sslPass, botName);
-        }
-
         return INSTANCE;
     }
 
     /**
      * Constructor
-     *
-     * @param ipOrHostname The IP or Hostname of an interface to bind to. null for the default AnyAddress
-     * @param port The port number to bind to
-     * @param useHttps If SSL should be used.
-     * @param sslFile The path to a Java Keystore (.jks) file that contains a Private Key and Certificate Trust Chain or {@code null} to disable
-     * SSL/TLS support
-     * @param sslPass The password to the .jks file specified in {@code sslFile} or {@code null} if not needed or not using SSL/TLS support
      */
-    private HTTPWSServer(String ipOrHostname, int port, boolean useHttps, String sslFile, String sslPass, String botName) {
+    private HTTPWSServer() {
+        /**
+         * @botproperty bindip - The IP address the bots webserver runs on. Default all
+         * @botpropertycatsort bindip 200 700 HTTP/WS
+         * @botpropertyrestart bindip
+         */
+        /**
+         * @botproperty baseport - The port the bots webserver runs on. Default `25000`
+         * @botpropertycatsort baseport 20 700 HTTP/WS
+         * @botpropertyrestart baseport
+         */
+        /**
+         * @botproperty usehttps - If `true`, the bots webserver uses HTTPS to secure the connection. Default `true`
+         * @botpropertycatsort usehttps 30 700 HTTP/WS
+         * @botpropertyrestart usehttps
+         */
+        /**
+         * @botproperty httpsFileName - If httpsKeyFileName is unset/blank, a JKS containing the certificate; else, an X509 Certificate in PEM format
+         * @botpropertycatsort httpsFileName 40 700 HTTP/WS
+         * @botpropertyrestart httpsFileName
+         */
+        /**
+         * @botproperty httpsKeyFileName - The PKCS#8 private key in PEM format for httpsFileName; if unset/blank, httpsFileName is loaded as a JKS
+         * @botpropertycatsort httpsKeyFileName 50 700 HTTP/WS
+         * @botpropertyrestart httpsKeyFileName
+         */
+        /**
+         * @botproperty httpsPassword - The password, if any, to _httpsFileName_
+         * @botpropertycatsort httpsPassword 60 700 HTTP/WS
+         * @botpropertyrestart httpsPassword
+         */
+        String ipOrHostname = CaselessProperties.instance().getProperty("bindIP", "");
+        int port = CaselessProperties.instance().getPropertyAsInt("baseport", 25000);
+        boolean useHttps = CaselessProperties.instance().getPropertyAsBoolean("usehttps", true);
+        String sslFile = CaselessProperties.instance().getProperty("httpsFileName", "");
+        String botName = PhantomBot.instance().getBotName();
+
+        boolean portAvailable = checkPortAvailable(ipOrHostname, port);
+
+        if (!portAvailable) {
+            com.gmt2001.Console.err.println();
+            com.gmt2001.Console.err.println();
+            com.gmt2001.Console.err.println("Port is already in use: " + port);
+            com.gmt2001.Console.err.println("Ensure that another copy of PhantomBot is not running.");
+            com.gmt2001.Console.err.println("If another copy is not running, try to change baseport in ./config/botlogin.txt");
+            com.gmt2001.Console.err.println("PhantomBot will now exit.");
+            com.gmt2001.Console.err.println();
+            com.gmt2001.Console.err.println();
+            PhantomBot.exitError();
+        }
+
         try {
             if (useHttps) {
-                this.sslFile = sslFile;
-                this.sslPass = sslPass;
-
-                ks = KeyStore.getInstance("JKS");
-                ks.load(null, this.sslPass.toCharArray());
-
-                if (sslFile == null || sslFile.isBlank()) {
+                if (sslFile.isBlank()) {
                     this.autoSSL = true;
-                    this.sslFile = "./config/selfkey.jks";
-                    this.sslPass = "pbselfsign";
-
-                    if (!Files.exists(Paths.get(this.sslFile))) {
+                    if (!Files.exists(PathValidator.getRealPath(AUTOSSLFILE))) {
+                        com.gmt2001.Console.debug.println("No Auto-SSL File. Generating...");
                         this.generateAutoSsl(botName);
                     }
                 }
 
                 this.reloadSslContext();
 
-                sslEnabled = true;
+                this.setupSslWatcher();
+
+                this.sslEnabled = true;
             } else {
-                sslCtx = null;
+                this.sslCtx = null;
             }
 
             ServerBootstrap b = new ServerBootstrap();
-            b.group(group)
-                    .channel(NioServerSocketChannel.class)
+            b.group(this.group)
+                    .channel(EventLoopDetector.getServerChannelClass())
+                    .childOption(ChannelOption.TCP_NODELAY, true)
                     .childHandler(new HTTPWSServerInitializer());
 
-            if (ipOrHostname == null || ipOrHostname.isBlank()) {
-                ch = b.bind(port).sync().channel();
+            if (ipOrHostname.isBlank()) {
+                this.ch = b.bind(port).sync().channel();
             } else {
-                ch = b.bind(ipOrHostname, port).sync().channel();
+                this.ch = b.bind(ipOrHostname, port).sync().channel();
             }
 
             if (port == 443) {
                 try {
-                    if (ipOrHostname == null || ipOrHostname.isBlank()) {
-                        ch2 = b.bind(80).sync().channel();
+                    if (ipOrHostname.isBlank()) {
+                        this.ch2 = b.bind(80).sync().channel();
                     } else {
-                        ch2 = b.bind(ipOrHostname, 80).sync().channel();
+                        this.ch2 = b.bind(ipOrHostname, 80).sync().channel();
                     }
                 } catch (InterruptedException ex2) {
-                    ch2 = null;
-                    com.gmt2001.Console.out.println("Unble to bind port 80, going with only 443...");
+                    this.ch2 = null;
+                    com.gmt2001.Console.out.println("Unable to bind port 80, going with only 443...");
                     com.gmt2001.Console.err.printStackTrace(ex2);
                 }
             }
         } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException | UnrecoverableKeyException | InterruptedException ex) {
             com.gmt2001.Console.err.printStackTrace(ex);
-            group.shutdownGracefully();
+            this.group.shutdownGracefully();
+        }
+    }
+
+    private static boolean checkPortAvailable(String bindIp, int port) {
+        try ( ServerSocket serverSocket = bindIp.isEmpty() ? new ServerSocket(port) : new ServerSocket(port, 1, java.net.InetAddress.getByName(bindIp))) {
+            serverSocket.setReuseAddress(true);
+            com.gmt2001.Console.debug.println("Port available " + port);
+            return true;
+        } catch (IOException ex) {
+            com.gmt2001.Console.debug.println("Port not available " + port);
+            com.gmt2001.Console.debug.printStackTrace(ex);
+            return false;
         }
     }
 
     public boolean isSsl() {
-        return this.sslEnabled || PhantomBot.instance().getProperties().getPropertyAsBoolean("proxybypasshttps", false);
+        /**
+         * @botproperty proxybypasshttps - If `true`, the HTTP server reports SSL is enabled, even if `usessl` is `false`. Default `false`
+         * @botpropertycatsort proxybypasshttps 80 700 HTTP/WS
+         * @botpropertyrestart proxybypasshttps
+         */
+        return this.sslEnabled || CaselessProperties.instance().getPropertyAsBoolean("proxybypasshttps", false);
     }
 
-    private void generateAutoSsl() {
+    public boolean isAutoSsl() {
+        return this.autoSSL;
+    }
+
+    void generateAutoSsl() {
         this.generateAutoSsl(PhantomBot.instance().getBotName());
+    }
+
+    void generateAutoSsl(boolean forceNew) {
+        this.generateAutoSsl(PhantomBot.instance().getBotName(), forceNew);
+    }
+
+    void generateAutoSsl(String botName) {
+        this.generateAutoSsl(botName, false);
+    }
+
+    private void setupSslWatcher() {
+        ExecutorService.scheduleAtFixedRate(() -> {
+            String sslFile = CaselessProperties.instance().getProperty("httpsFileName", "");
+            String sslKeyFile = CaselessProperties.instance().getProperty("httpsKeyFileName", "");
+
+            if (sslFile.isBlank()) {
+                sslFile = AUTOSSLFILE;
+            }
+
+            try {
+                Instant lastModified;
+                boolean reload = false;
+                if (Files.exists(PathValidator.getRealPath(sslFile))) {
+                    lastModified = Files.getLastModifiedTime(PathValidator.getRealPath(sslFile)).toInstant();
+                    if (lastModified.isAfter(this.lastSslModified)) {
+                        if (this.lastSslModified != Instant.MIN) {
+                            reload = true;
+                        }
+
+                        this.lastSslModified = lastModified;
+                    }
+                }
+
+                if (!sslKeyFile.isBlank() && Files.exists(PathValidator.getRealPath(sslKeyFile))) {
+                    lastModified = Files.getLastModifiedTime(PathValidator.getRealPath(sslKeyFile)).toInstant();
+                    if (lastModified.isAfter(this.lastSslKeyModified)) {
+                        if (this.lastSslKeyModified != Instant.MIN) {
+                            reload = true;
+                        }
+
+                        this.lastSslKeyModified = lastModified;
+                    }
+                }
+
+                if (reload) {
+                    try {
+                        this.reloadSslContext();
+                    } catch (NoSuchAlgorithmException | CertificateException | KeyStoreException | UnrecoverableKeyException ex) {
+                        com.gmt2001.Console.err.printStackTrace(ex);
+                    }
+                }
+            } catch (IOException ex) {
+                com.gmt2001.Console.err.printStackTrace(ex);
+            }
+        }, 1, 30, TimeUnit.SECONDS);
     }
 
     /**
      * Manages generation of the AutoSsl certificate
+     *
+     * @param botName The bot name to use in the certificates DN
+     * @param forceNew If true, forces a brand new key pair to be generated
      */
-    private void generateAutoSsl(String botName) {
+    void generateAutoSsl(String botName, boolean forceNew) {
+        if (!this.autoSSL) {
+            return;
+        }
+
+        String sslFile = AUTOSSLFILE;
+        String sslNewFile = AUTOSSLFILE + ".new";
+        String sslPass = AUTOSSLPASSWORD;
+
         try {
-            KeyPair kp;
-            Key key = ks.getKey("phantombot", "pbselfsign".toCharArray());
-            if (key instanceof PrivateKey) {
-                // Get certificate of public key
-                Certificate cert = ks.getCertificate("phantombot");
+            KeyStore ks = KeyStore.getInstance("JKS");
+            ks.load(null, sslPass.toCharArray());
+            KeyPair kp = null;
 
-                // Get public key
-                PublicKey publicKey = cert.getPublicKey();
+            try {
+                if (Files.exists(PathValidator.getRealPath(sslFile))) {
+                    try ( InputStream inputStream = Files.newInputStream(PathValidator.getRealPath(sslFile))) {
+                        ks.load(inputStream, sslPass.toCharArray());
+                    }
+                }
 
-                // Return a key pair
-                kp = new KeyPair(publicKey, (PrivateKey) key);
-            } else {
-                kp = SelfSignedX509CertificateGenerator.generateKeyPair(SelfSignedX509CertificateGenerator.RECOMMENDED_KEY_SIZE);
+                if (!forceNew) {
+                    Key key = ks.getKey(AUTOSSLKEYALIAS, sslPass.toCharArray());
+                    if (key instanceof PrivateKey pk) {
+                        // Get certificate of public key
+                        Certificate cert = ks.getCertificate(AUTOSSLKEYALIAS);
+
+                        // Get public key
+                        PublicKey publicKey = cert.getPublicKey();
+
+                        // Return a key pair
+                        kp = new KeyPair(publicKey, pk);
+                    }
+                }
+            } catch (IOException | CertificateException | KeyStoreException | NoSuchAlgorithmException | UnrecoverableKeyException ex) {
             }
 
-            String dn = SelfSignedX509CertificateGenerator.generateDistinguishedName("PhantomBot." + botName);
+            try {
+                if (kp == null) {
+                    kp = SelfSignedX509CertificateGenerator.generateKeyPair(SelfSignedX509CertificateGenerator.RECOMMENDED_KEY_SIZE);
+                }
 
-            X509Certificate cert = SelfSignedX509CertificateGenerator.generateCertificate(dn, kp, SelfSignedX509CertificateGenerator.RECOMMENDED_VALIDITY_DAYS, SelfSignedX509CertificateGenerator.RECOMMENDED_SIG_ALGO);
+                String dn = SelfSignedX509CertificateGenerator.generateDistinguishedName("PhantomBot." + botName);
 
-            ks.setKeyEntry("phantombot", kp.getPrivate(), "pbselfsign".toCharArray(), new Certificate[]{cert});
+                X509Certificate cert = SelfSignedX509CertificateGenerator.generateCertificate(dn, kp,
+                        SelfSignedX509CertificateGenerator.RECOMMENDED_VALIDITY_DAYS, SelfSignedX509CertificateGenerator.RECOMMENDED_SIG_ALGO);
 
-            try (OutputStream outputStream = Files.newOutputStream(Paths.get(sslFile))) {
-                ks.store(outputStream, "pbselfsign".toCharArray());
+                ks.setKeyEntry(AUTOSSLKEYALIAS, kp.getPrivate(), sslPass.toCharArray(), new Certificate[]{cert});
+
+                Files.deleteIfExists(PathValidator.getRealPath(sslNewFile));
+
+                try ( OutputStream outputStream = Files.newOutputStream(PathValidator.getRealPath(sslNewFile))) {
+                    ks.store(outputStream, sslPass.toCharArray());
+                }
+
+                Files.deleteIfExists(PathValidator.getRealPath(sslFile));
+                Files.move(PathValidator.getRealPath(sslNewFile), PathValidator.getRealPath(sslFile), StandardCopyOption.REPLACE_EXISTING);
+
+                this.reloadSslContext();
+
+                this.nextAutoSslCheck = Instant.now().plus(1, ChronoUnit.DAYS);
+            } catch (IOException | InvalidKeyException | NoSuchProviderException | SignatureException | CertificateException | UnrecoverableKeyException
+                    | KeyStoreException | NoSuchAlgorithmException ex) {
+                com.gmt2001.Console.err.printStackTrace(ex);
             }
-
-            this.reloadSslContext();
-
-            Calendar cal = Calendar.getInstance();
-            cal.add(Calendar.DAY_OF_MONTH, 1);
-            this.nextAutoSslCheck = cal.getTime();
-        } catch (IOException | InvalidKeyException | NoSuchProviderException | SignatureException | CertificateException | UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException ex) {
+        } catch (IOException | KeyStoreException | NoSuchAlgorithmException | CertificateException ex) {
             com.gmt2001.Console.err.printStackTrace(ex);
         }
     }
 
+    private void reloadSslContext() throws IOException, NoSuchAlgorithmException, CertificateException, KeyStoreException, UnrecoverableKeyException {
+        String sslFile = CaselessProperties.instance().getProperty("httpsFileName", "");
+        String sslKeyFile = CaselessProperties.instance().getProperty("httpsKeyFileName", "");
+
+        if (sslFile.isBlank()) {
+            if (Files.exists(PathValidator.getRealPath(AUTOSSLFILE))) {
+                com.gmt2001.Console.debug.println("Using Auto-SSL");
+                try {
+                    this.reloadSslContextJKS();
+                    this.regeneratingFailedAutoSsl = false;
+                } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException | UnrecoverableKeyException ex) {
+                    if (!this.regeneratingFailedAutoSsl) {
+                        com.gmt2001.Console.debug.println("Replacing corrupt Auto-SSL");
+                        this.regeneratingFailedAutoSsl = true;
+                        this.generateAutoSsl(true);
+                    } else {
+                        throw ex;
+                    }
+                }
+            }
+        } else if (sslFile.toLowerCase().endsWith(".jks") || sslKeyFile.isBlank()) {
+            com.gmt2001.Console.debug.println("Using JKS");
+            this.reloadSslContextJKS();
+        } else {
+            com.gmt2001.Console.debug.println("Using X.509");
+            this.reloadSslContextX509();
+        }
+    }
+
     /**
-     * Reloads the SslContext
+     * Reloads the SslContext using a JKS
      *
      * @throws IOException
      * @throws NoSuchAlgorithmException
@@ -235,17 +424,52 @@ public final class HTTPWSServer {
      * @throws KeyStoreException
      * @throws UnrecoverableKeyException
      */
-    private void reloadSslContext() throws IOException, NoSuchAlgorithmException, CertificateException, KeyStoreException, UnrecoverableKeyException {
-        try (InputStream inputStream = Files.newInputStream(Paths.get(sslFile))) {
-            ks.load(inputStream, this.sslPass.toCharArray());
+    private void reloadSslContextJKS() throws IOException, NoSuchAlgorithmException, CertificateException, KeyStoreException, UnrecoverableKeyException {
+        String sslFile = CaselessProperties.instance().getProperty("httpsFileName", "");
+        String sslPass = CaselessProperties.instance().getProperty("httpsPassword", "");
+
+        if (sslFile.isBlank()) {
+            sslFile = AUTOSSLFILE;
+            sslPass = AUTOSSLPASSWORD;
+        }
+
+        com.gmt2001.Console.debug.println("Opening JKS at " + sslFile);
+
+        KeyStore ks = KeyStore.getInstance("JKS");
+        try ( InputStream inputStream = Files.newInputStream(PathValidator.getRealPath(sslFile))) {
+            ks.load(inputStream, sslPass.toCharArray());
 
             KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-            kmf.init(ks, this.sslPass.toCharArray());
+            kmf.init(ks, sslPass.toCharArray());
 
             TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
-            tmf.init(this.ks);
+            tmf.init(ks);
 
-            sslCtx = SslContextBuilder.forServer(kmf).trustManager(tmf).build();
+            com.gmt2001.Console.debug.println("Building context with KMF/TMF");
+            this.sslCtx = SslContextBuilder.forServer(kmf).trustManager(tmf).build();
+        }
+    }
+
+    /**
+     * Reloads the SslContext using an X509 Certificate
+     *
+     * @throws IOException
+     * @throws NoSuchAlgorithmException
+     * @throws CertificateException
+     * @throws KeyStoreException
+     * @throws UnrecoverableKeyException
+     */
+    private void reloadSslContextX509() throws IOException, NoSuchAlgorithmException, CertificateException, KeyStoreException, UnrecoverableKeyException {
+        String sslFile = CaselessProperties.instance().getProperty("httpsFileName", "");
+        String sslKeyFile = CaselessProperties.instance().getProperty("httpsKeyFileName", "");
+        String sslPass = CaselessProperties.instance().getProperty("httpsPassword", "");
+        com.gmt2001.Console.debug.println("Opening chain PEM at " + sslFile);
+        try ( InputStream inputStreamX = Files.newInputStream(PathValidator.getRealPath(sslFile))) {
+            com.gmt2001.Console.debug.println("Opening key PEM at " + sslKeyFile);
+            try ( InputStream inputStreamK = Files.newInputStream(PathValidator.getRealPath(sslKeyFile))) {
+                com.gmt2001.Console.debug.println("Building context with streams");
+                this.sslCtx = SslContextBuilder.forServer(inputStreamX, inputStreamK, sslPass.isBlank() ? null : sslPass).build();
+            }
         }
     }
 
@@ -253,23 +477,36 @@ public final class HTTPWSServer {
      * Checks if the AutoSsl certificate requires renewal, and triggers it
      */
     private void renewAutoSsl() {
-        try {
-            if (this.ks != null) {
-                Key key = ks.getKey("phantombot", "pbselfsign".toCharArray());
-                if (key instanceof PrivateKey) {
-                    // Get certificate of public key
-                    X509Certificate cert = (X509Certificate) ks.getCertificate("phantombot");
-                    Calendar cal = Calendar.getInstance();
-                    cal.add(Calendar.DAY_OF_MONTH, 1);
-                    this.nextAutoSslCheck = cal.getTime();
-                    cal.add(Calendar.DAY_OF_MONTH, 29);
+        String sslFile = AUTOSSLFILE;
+        String sslPass = AUTOSSLPASSWORD;
 
-                    if (cal.getTime().after(cert.getNotAfter())) {
-                        this.generateAutoSsl();
+        try {
+            if (!Files.exists(PathValidator.getRealPath(sslFile))) {
+                com.gmt2001.Console.debug.println("Auto-SSL JKS missing, generating a new one...");
+                this.generateAutoSsl();
+            } else {
+                KeyStore ks = KeyStore.getInstance("JKS");
+                boolean shouldGenerate = false;
+                try ( InputStream inputStream = Files.newInputStream(PathValidator.getRealPath(sslFile))) {
+                    ks.load(inputStream, sslPass.toCharArray());
+                    Key key = ks.getKey(AUTOSSLKEYALIAS, sslPass.toCharArray());
+                    if (key instanceof PrivateKey) {
+                        // Get certificate of public key
+                        X509Certificate cert = (X509Certificate) ks.getCertificate(AUTOSSLKEYALIAS);
+                        this.nextAutoSslCheck = Instant.now().plus(1, ChronoUnit.DAYS);
+
+                        if (Instant.now().plus(29, ChronoUnit.DAYS).isAfter(cert.getNotAfter().toInstant())) {
+                            com.gmt2001.Console.debug.println("Auto-SSL JKS expiration approaching, renewing...");
+                            shouldGenerate = true;
+                        }
                     }
                 }
+
+                if (shouldGenerate) {
+                    this.generateAutoSsl();
+                }
             }
-        } catch (UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException ex) {
+        } catch (UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException | IOException ex) {
             com.gmt2001.Console.err.printStackTrace(ex);
         }
     }
@@ -280,7 +517,7 @@ public final class HTTPWSServer {
      * @return the current SslContext
      */
     SslContext getSslContext() {
-        if (this.autoSSL && new Date().after(this.nextAutoSslCheck)) {
+        if (this.autoSSL && Instant.now().isAfter(this.nextAutoSslCheck)) {
             this.renewAutoSsl();
         }
 
@@ -296,12 +533,16 @@ public final class HTTPWSServer {
      *
      * @param path The path to check
      * @param isWs Whether this check is for a WebSocket or not
-     * @return {@code false} if the path is illegal, {@code} true otherwise
+     * @return true otherwise
      */
     static boolean validateUriPath(String path, boolean isWs) {
-        return (isWs ? path.startsWith("/ws") : !path.startsWith("/ws"))
+        return (isWs == path.startsWith("/ws"))
                 || !path.contains("..")
-                || !(path.startsWith("/config") && !path.startsWith("/config/audio-hooks") && !path.startsWith("/config/gif-alerts"));
+                || !(path.startsWith("/config")
+                && !path.startsWith("/config/audio-hooks")
+                && !path.startsWith("/config/clips")
+                && !path.startsWith("/config/emotes")
+                && !path.startsWith("/config/gif-alerts"));
     }
 
     /**
@@ -309,12 +550,16 @@ public final class HTTPWSServer {
      */
     public void close() {
         WebSocketFrameHandler.closeAllWsSessions();
-        ch.close().awaitUninterruptibly(5, TimeUnit.SECONDS);
-
-        if (ch2 != null) {
-            ch2.close().awaitUninterruptibly(5, TimeUnit.SECONDS);
+        if (this.ch != null) {
+            this.ch.close().awaitUninterruptibly(5, TimeUnit.SECONDS);
         }
 
-        group.shutdownGracefully(3, 5, TimeUnit.SECONDS);
+        if (this.ch2 != null) {
+            this.ch2.close().awaitUninterruptibly(5, TimeUnit.SECONDS);
+        }
+
+        if (this.group != null) {
+            this.group.shutdownGracefully(3, 5, TimeUnit.SECONDS);
+        }
     }
 }

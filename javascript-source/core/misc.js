@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,20 +15,22 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global Packages */
+
 (function () {
-    var currentHostTarget = '',
-            respond = getSetIniDbBoolean('settings', 'response_@chat', true),
-            action = getSetIniDbBoolean('settings', 'response_action', false),
-            secureRandom = new java.security.SecureRandom(),
+    var respond = $.getSetIniDbBoolean('settings', 'response_@chat', true),
+            action = $.getSetIniDbBoolean('settings', 'response_action', false),
+            secureRandom = new Packages.java.security.SecureRandom(),
             reg = new RegExp(/^@\w+,\s?$/),
-            timeout = 0;
+            timeout = 0,
+            _lock = new Packages.java.util.concurrent.locks.ReentrantLock();
 
     /*
      * @function reloadMisc
      */
     function reloadMisc() {
-        respond = getIniDbBoolean('settings', 'response_@chat');
-        action = getIniDbBoolean('settings', 'response_action');
+        respond = $.getIniDbBoolean('settings', 'response_@chat');
+        action = $.getIniDbBoolean('settings', 'response_action');
     }
 
     /**
@@ -45,13 +47,13 @@
 
         if (subIndex > -1) {
             for (i in list) {
-                if (list[i][subIndex].equalsIgnoreCase(value)) {
+                if ($.equalsIgnoreCase(list[i][subIndex], value)) {
                     return true;
                 }
             }
         } else {
             for (i in list) {
-                if (list[i].equalsIgnoreCase(value)) {
+                if ($.equalsIgnoreCase(list[i], value)) {
                     return true;
                 }
             }
@@ -63,7 +65,7 @@
      * @function getMessageWrites
      */
     function getMessageWrites() {
-        return parseInt($.session.getWrites());
+        return parseInt(Packages.tv.phantombot.PhantomBot.instance().getSession().getWrites());
     }
 
     /**
@@ -83,7 +85,7 @@
      * @returns {string}
      */
     function sanitize(username) {
-        return (username == null ? username : String(username).replace(/\W/g, '').toLowerCase());
+        return (username === null ? username : String(username).replace(/\W/g, '').toLowerCase());
     }
 
     /**
@@ -93,88 +95,41 @@
      * @returns {boolean}
      */
     function isFollower(username) {
-        var userFollowsCheck;
-
-        if ($.inidb.exists('followed', username.toLowerCase())) {
-            return true;
-        } else {
-            userFollowsCheck = $.twitch.GetUserFollowsChannel(username.toLowerCase(), $.channelName.toLowerCase());
-            if (userFollowsCheck.getInt('_http') == 200) {
-                $.inidb.set('followed', username.toLowerCase(), true);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * @function getCurrentHostTarget
-     * @export $
-     * @returns {string}
-     */
-    function getCurrentHostTarget() {
-        return currentHostTarget.toLowerCase();
-    }
-
-    /**
-     * @function strlen
-     * @export $
-     * @param {string} str
-     * @returns {Number}
-     */
-    function strlen(str) {
-        if (str == null) {
-            return 0;
-        }
-
-        if ((typeof str.length) instanceof java.lang.String) {
-            if ((typeof str.length).equalsIgnoreCase('number')) {
-                return str.length;
-            } else {
-                return str.length;
-            }
-        } else {
-            if ((typeof str.length) == 'number') {
-                return str.length;
-            } else {
-                return str.length;
-            }
-        }
-    }
-
-    function equalsIgnoreCase(str1, str2) {
-        try {
-            return str1.equalsIgnoreCase(str2);
-        } catch (e) {
-            try {
-                return str1.toLowerCase() == str2.toLowerCase();
-            } catch (e) {
-                return false;
-            }
-        }
-
-        return false;
+        return $.followers.follows(username);
     }
 
     /**
      * @function say
      * @export $
      * @param {string} message
+     * @param {number} delay
      */
-    function say(message) {
-        if (reg.test(message)) {
+    function say(message, delay) {
+        if (delay !== undefined && delay !== null && !isNaN(delay)) {
+            if (delay > 0) {
+                setTimeout(function () {
+                    say(message);
+                }, delay);
+                return;
+            }
+        }
+        if (message === undefined || message === null) {
+            return;
+        }
+        message = $.jsString(message);
+        if (message.trim().length === 0 || reg.test(message)) {
             return;
         }
 
         if (respond && !action) {
-            $.session.say(message);
+            Packages.tv.phantombot.PhantomBot.instance().getSession().say(message);
         } else {
             if (respond && action) {
                 // If the message is a Twitch command, remove the /me.
                 if (message.startsWith('.') || message.startsWith('/')) {
-                    $.session.say(message);
+                    Packages.tv.phantombot.PhantomBot.instance().getSession().say(message);
                 } else {
-                    $.session.say('/me ' + message);
+                    Packages.tv.phantombot.PhantomBot.instance().getSession().say('/me ' + message);
                 }
             }
             if (!respond) {
@@ -187,37 +142,24 @@
     }
 
     /**
-     * @function say
+     * @function sayWithTimeout
      * @export $
      * @param {string} message
      * @param {boolean} run
      */
     function sayWithTimeout(message, run) {
-        if (((timeout + 10000) > systemTime()) || !run) {
-            return;
+        _lock.lock();
+        try {
+            if (((timeout + 10000) > $.systemTime()) || !run) {
+                return;
+            }
+
+            timeout = $.systemTime();
+        } finally {
+            _lock.unlock();
         }
 
-        timeout = systemTime();
-
         say(message);
-    }
-
-    /**
-     * @function systemTime
-     * @export $
-     * @returns {Number}
-     */
-    function systemTime() {
-        return parseInt(java.lang.System.currentTimeMillis());
-    }
-
-    /**
-     * @function systemTimeNano
-     * @export $
-     * @returns {Number}
-     */
-    function systemTimeNano() {
-        return parseInt(java.lang.System.nanoTime());
     }
 
     /**
@@ -227,7 +169,7 @@
      * @returns {Number}
      */
     function rand(max) {
-        if (max == 0) {
+        if (max === 0) {
             return max;
         }
         return (Math.abs(secureRandom.nextInt()) % max);
@@ -241,7 +183,7 @@
      * @returns {Number}
      */
     function randRange(min, max) {
-        if (min == max) {
+        if (min === max) {
             return min;
         }
         return parseInt(rand(max - min + 1) + min);
@@ -254,7 +196,7 @@
      * @returns {*}
      */
     function randElement(array) {
-        if (array == null) {
+        if (array === null) {
             return null;
         }
         return array[randRange(0, array.length - 1)];
@@ -294,7 +236,7 @@
      * @returns {Number}
      */
     function trueRandRange(min, max) {
-        if (min == max) {
+        if (min === max) {
             return min;
         }
 
@@ -341,7 +283,7 @@
                     return data.getInt(0);
                 }
             } else {
-                if (request.httpCode == 0) {
+                if (request.httpCode === 0) {
                     $.log.error('Failed to use random.org: ' + request.exception);
                 } else {
                     $.log.error('Failed to use random.org: HTTP' + request.httpCode + ' ' + request.content);
@@ -361,7 +303,7 @@
      * @returns {*}
      */
     function trueRandElement(array) {
-        if (array == null) {
+        if (array === null) {
             return null;
         }
         return array[trueRand(array.length - 1)];
@@ -410,177 +352,6 @@
      */
     function getPercentage(current, total) {
         return Math.ceil((current / total) * 100);
-    }
-
-    /**
-     * @function getIniDbBoolean
-     * @export $
-     * @param {string} fileName
-     * @param {string|Number} key
-     * @param {boolean} [defaultValue]
-     * @returns {boolean}
-     */
-    function getIniDbBoolean(fileName, key, defaultValue) {
-        if ($.inidb.exists(fileName, key) == true) {
-            return ($.inidb.get(fileName, key) == 'true');
-        } else {
-            return (defaultValue);
-        }
-    }
-
-    /**
-     * @function getSetIniDbBoolean
-     * @export $
-     * @param {string} fileName
-     * @param {string|Number} key
-     * @param {boolean} [defaultValue]
-     * @returns {boolean}
-     */
-    function getSetIniDbBoolean(fileName, key, defaultValue) {
-        if ($.inidb.exists(fileName, key) == true) {
-            return ($.inidb.get(fileName, key) == 'true');
-        } else {
-            $.inidb.set(fileName, key, defaultValue.toString());
-            return (defaultValue);
-        }
-    }
-
-
-    /**
-     * @function setIniDbBoolean
-     * @export $
-     * @param {string} fileName
-     * @param {string|Number} key
-     * @param {boolean} state
-     */
-    function setIniDbBoolean(fileName, key, state) {
-        $.inidb.set(fileName, key, state.toString());
-    }
-
-    /**
-     * @function getIniDbString
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {string}
-     */
-    function getIniDbString(fileName, key, defaultValue) {
-        if ($.inidb.exists(fileName, key) == true) {
-            return ($.inidb.get(fileName, key) + '');
-        } else {
-            return (defaultValue);
-        }
-    }
-
-    /**
-     * @function getSetIniDbString
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {string}
-     */
-    function getSetIniDbString(fileName, key, defaultValue) {
-        if ($.inidb.exists(fileName, key) == true) {
-            return ($.inidb.get(fileName, key) + '');
-        } else {
-            $.inidb.set(fileName, key, defaultValue);
-            return (defaultValue);
-        }
-    }
-
-    /**
-     * @function setIniDbString
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {string}
-     */
-    function setIniDbString(fileName, key, value) {
-        $.inidb.set(fileName, key, value);
-    }
-
-    /**
-     * @function getIniDbNumber
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {number}
-     */
-    function getIniDbNumber(fileName, key, defaultValue) {
-        if ($.inidb.exists(fileName, key) == true) {
-            return parseInt($.inidb.get(fileName, key));
-        } else {
-            return defaultValue;
-        }
-    }
-
-    /**
-     * @function getSetIniDbNumber
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {number}
-     */
-    function getSetIniDbNumber(fileName, key, defaultValue) {
-        if ($.inidb.exists(fileName, key) == true) {
-            return parseInt($.inidb.get(fileName, key));
-        } else {
-            $.inidb.set(fileName, key, defaultValue.toString());
-            return defaultValue;
-        }
-    }
-
-    /**
-     * @function setIniDbNumber
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {number}
-     */
-    function setIniDbNumber(fileName, key, value) {
-        $.inidb.set(fileName, key, value.toString());
-    }
-
-    /**
-     * @function getIniDbFloat
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {number}
-     */
-    function getIniDbFloat(fileName, key, defaultValue) {
-        if ($.inidb.exists(fileName, key) == true) {
-            return parseFloat($.inidb.get(fileName, key));
-        } else {
-            return defaultValue;
-        }
-    }
-
-    /**
-     * @function getSetIniDbFloat
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {number}
-     */
-    function getSetIniDbFloat(fileName, key, defaultValue) {
-        if ($.inidb.exists(fileName, key) == true) {
-            return parseFloat($.inidb.get(fileName, key));
-        } else {
-            $.inidb.set(fileName, key, defaultValue.toString());
-            return defaultValue;
-        }
-    }
-
-    /**
-     * @function setIniDbFloat
-     * @export $
-     * @param {string}
-     * @param {string}
-     * @param {number}
-     */
-    function setIniDbFloat(fileName, key, value) {
-        $.inidb.set(fileName, key, value.toString());
     }
 
     /**
@@ -642,138 +413,59 @@
     }
 
     /**
-     * @function paginateArrayDiscord
-     * @export $
-     * @param {Array}   Input array of data to paginate
-     * @param {String}  Key in the $.lang system
-     * @param {String}  Seperator to use between items
-     * @param {String}  Value of sender for $.whisperPrefix
-     * @param {Number}  Page to display, 0 for ALL
-     * @return {Number} Total number of pages.
-     *
-     */
-    function paginateArrayDiscord(array, langKey, sep, channel, sender, display_page) {
-        var idx,
-                output = '',
-                maxlen,
-                hasNoLang = langKey.startsWith('NULL'),
-                pageCount = 0;
-
-        if (display_page === undefined) {
-            display_page = 0;
-        }
-
-        maxlen = 1400 - (hasNoLang ? langKey.length : $.lang.get(langKey).length);
-        langKey = langKey.replace('NULL', '');
-        for (idx in array) {
-            output += array[idx];
-            if (output.length >= maxlen) {
-                pageCount++;
-                if (output.length > 0) {
-                    if (display_page === 0 || display_page === pageCount) {
-                        $.discord.say(channel, $.discord.userPrefix(sender) + ' ' + (hasNoLang ? (langKey + output) : $.lang.get(langKey, output)));
-                    }
-                }
-                output = '';
-            } else {
-                if (idx < array.length - 1) {
-                    output += sep;
-                }
-            }
-        }
-        pageCount++;
-        if (output.length > 0) {
-            if (display_page === 0 || display_page === pageCount) {
-                $.discord.say(channel, $.discord.userPrefix(sender) + ' ' + (hasNoLang ? (langKey + output) : $.lang.get(langKey, output)));
-            }
-        }
-        return pageCount;
-    }
-
-    /**
-     * Taken from: https://jsperf.com/replace-vs-split-join-vs-replaceall/95s
-     *
-     * Implementation of string.replaceAll
-     *
-     * @function replace
-     * @export $
-     * @param {string}
-     */
-    function replace(str, from, to) {
-        var idx, parts = [], l = from.length, prev = 0;
-        for (; ~(idx = str.indexOf(from, prev)); ) {
-            parts.push(str.slice(prev, idx), to);
-            prev = idx + l;
-        }
-        parts.push(str.slice(prev));
-        return parts.join('');
-    }
-
-    /**
-     * Taken from: https://github.com/tc39/proposal-string-matchall
-     *
-     * Implementation of string.matchAll
-     *
-     * @function matchAll
-     * @export $
-     * @param {type} str
-     * @param {type} regex
-     * @returns {Array}
-     */
-    function matchAll(str, regex) {
-        regex.lastIndex = 0;
-        var matches = [];
-        str.replace(regex, function () {
-            var match = Array.prototype.slice.call(arguments, 0, -2);
-            match.input = arguments[arguments.length - 1];
-            match.index = arguments[arguments.length - 2];
-            matches.push(match);
-        });
-
-        return matches;
-    }
-
-    function match(str, regex) {
-        regex.lastIndex = 0;
-        return str.match(regex);
-    }
-
-    function test(str, regex) {
-        regex.lastIndex = 0;
-        return regex.test(str);
-    }
-
-    function regexExec(str, regex) {
-        regex.lastIndex = 0;
-        return regex.exec(str);
-    }
-
-    /**
      * @function userPrefix
      * @export $
      * @param {username}
      */
     function userPrefix(username, comma) {
         if (!comma) {
-            return '@' + $.username.resolve(username) + ' ';
+            return '@' + $.viewer.getByLogin(username).name() + ' ';
         }
-        return '@' + $.username.resolve(username) + ', ';
+        return '@' + $.viewer.getByLogin(username).name() + ', ';
     }
 
-    function javaString(str) {
-        if (str === null || str === undefined) {
-            return null;
+    function usernameResolveIgnoreEx(user) {
+        try {
+            return $.viewer.getByLogin(user).name();
+        } catch (ex) {
+            return user;
         }
-
-        return new Packages.java.lang.String(str);
     }
 
-    function jsString(str) {
-        if (str === null || str === undefined) {
-            return null;
+    /**
+     * Returns a keys value from an arguments array which has a syntax of [key1=value1, key2=value2, key3=value3]
+     * @param {String[]} array
+     * @param {String} key
+     * @param {*} defaultValue
+     * @returns the value; the defaultValue if no array element with the key is not present; null if neither key is present nor a default value is provided
+     */
+    function getArgFromArray(array, key, defaultValue) {
+        for (let i = 0; i < array.length; i++) {
+            let pair = $.jsString(array[i]).split('=');
+            if ($.equalsIgnoreCase(pair[0], key)) {
+                return pair[1];
+            }
         }
 
-        return String(str + '');
+        return defaultValue === undefined ? null : defaultValue;
+    }
+
+    /**
+     * Converts any possible boolean represented as a string ('1', '0', 'true', 'false') to a proper boolean
+     * @param {String} string
+     * @return the boolean; null if it's not a valid boolean represented as a string
+     */
+    function stringToBoolean(string) {
+        if (string === undefined || string === null) {
+            return null;
+        }
+        if ($.equalsIgnoreCase(string, 'true') || string === '1') {
+            return true;
+        }
+        if ($.equalsIgnoreCase(string, 'false') || string === '0') {
+            return false;
+        }
+        return null;
     }
 
     /** Export functions to API */
@@ -784,19 +476,6 @@
     };
 
     $.arrayShuffle = arrayShuffle;
-    $.getCurrentHostTarget = getCurrentHostTarget;
-    $.getIniDbBoolean = getIniDbBoolean;
-    $.getIniDbString = getIniDbString;
-    $.getIniDbNumber = getIniDbNumber;
-    $.getIniDbFloat = getIniDbFloat;
-    $.getSetIniDbBoolean = getSetIniDbBoolean;
-    $.getSetIniDbString = getSetIniDbString;
-    $.getSetIniDbNumber = getSetIniDbNumber;
-    $.getSetIniDbFloat = getSetIniDbFloat;
-    $.setIniDbBoolean = setIniDbBoolean;
-    $.setIniDbString = setIniDbString;
-    $.setIniDbNumber = setIniDbNumber;
-    $.setIniDbFloat = setIniDbFloat;
     $.getOrdinal = getOrdinal;
     $.getPercentage = getPercentage;
     $.outOfRange = outOfRange;
@@ -805,25 +484,16 @@
     $.randInterval = randInterval;
     $.randRange = randRange;
     $.say = say;
-    $.strlen = strlen;
-    $.systemTime = systemTime;
     $.trueRand = trueRand;
     $.trueRandElement = trueRandElement;
     $.trueRandRange = trueRandRange;
     $.paginateArray = paginateArray;
-    $.replace = replace;
-    $.matchAll = matchAll;
-    $.match = match;
-    $.test = test;
-    $.regexExec = regexExec;
     $.userPrefix = userPrefix;
     $.reloadMisc = reloadMisc;
     $.hasKey = hasKey;
-    $.systemTimeNano = systemTimeNano;
     $.getMessageWrites = getMessageWrites;
     $.sayWithTimeout = sayWithTimeout;
-    $.paginateArrayDiscord = paginateArrayDiscord;
-    $.equalsIgnoreCase = equalsIgnoreCase;
-    $.javaString = javaString;
-    $.jsString = jsString;
+    $.usernameResolveIgnoreEx = usernameResolveIgnoreEx;
+    $.getArgFromArray = getArgFromArray;
+    $.stringToBoolean = stringToBoolean;
 })();

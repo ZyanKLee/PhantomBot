@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
      * @event webPanelSocketUpdate
      */
     $.bind('webPanelSocketUpdate', function(event) {
-        if (event.getScript().equalsIgnoreCase('./discord/handlers/streamlabsHandler.js')) {
+        if ($.equalsIgnoreCase(event.getScript(), './discord/handlers/streamlabsHandler.js')) {
             toggle = $.getIniDbBoolean('discordSettings', 'streamlabsToggle', false);
             message = $.getIniDbString('discordSettings', 'streamlabsMessage', 'Thank you very much (name) for the tip of $(amount) (currency)!');
             channelName = $.getIniDbString('discordSettings', 'streamlabsChannel', '');
@@ -109,7 +109,7 @@
             action = args[0],
             subAction = args[1];
 
-        if (command.equalsIgnoreCase('streamlabshandler')) {
+        if ($.equalsIgnoreCase(command, 'streamlabshandler')) {
             if (action === undefined) {
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.streamlabshandler.usage'));
                 return;
@@ -118,7 +118,7 @@
             /**
              * @discordcommandpath streamlabshandler toggle - Toggles the StreamLabs donation announcements.
              */
-            if (action.equalsIgnoreCase('toggle')) {
+            if ($.equalsIgnoreCase(action, 'toggle')) {
                 toggle = !toggle;
                 $.inidb.set('discordSettings', 'streamlabsToggle', toggle);
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.streamlabshandler.toggle', (toggle === true ? $.lang.get('common.enabled') : $.lang.get('common.disabled'))));
@@ -127,7 +127,7 @@
             /**
              * @discordcommandpath streamlabshandler message [message] - Sets the StreamLabs donation announcement message.
              */
-            if (action.equalsIgnoreCase('message')) {
+            if ($.equalsIgnoreCase(action, 'message')) {
                 if (subAction === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.streamlabshandler.message.usage'));
                     return;
@@ -141,7 +141,7 @@
             /**
              * @discordcommandpath streamlabshandler channel [channel name] - Sets the channel that announcements from this module will be said in.
              */
-            if (action.equalsIgnoreCase('channel')) {
+            if ($.equalsIgnoreCase(action, 'channel')) {
                 if (subAction === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.streamlabshandler.channel.usage'));
                     return;
@@ -155,9 +155,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/handlers/streamlabsHandler.js', 'streamlabshandler', 1);
         $.discord.registerSubCommand('streamlabshandler', 'toggle', 1);
         $.discord.registerSubCommand('streamlabshandler', 'message', 1);

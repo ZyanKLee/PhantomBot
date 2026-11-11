@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,12 +15,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global Packages */
+
 (function () {
     // Pre-build regular expressions.z
     var reCommandTag = new RegExp(/\(command\s([\w]+)\)/),
             customCommands = [],
-            ScriptEventManager = Packages.tv.phantombot.script.ScriptEventManager,
-            CommandEvent = Packages.tv.phantombot.event.command.CommandEvent;
+            EventBus = Packages.tv.phantombot.event.EventBus,
+            CommandEvent = Packages.tv.phantombot.event.command.CommandEvent,
+            _lock = new Packages.java.util.concurrent.locks.ReentrantLock();
 
     /*
      * @function runCommand
@@ -28,12 +31,18 @@
      * @param {string} username
      * @param {string} command
      * @param {string} args
+     * @param {object} tags
+     * @param {string} alias
      */
-    function runCommand(username, command, args, tags) {
+    function runCommand(username, command, args, tags, alias) {
+        if (alias === undefined) {
+            alias = null;
+        }
+
         if (tags !== undefined) {
-            ScriptEventManager.instance().onEvent(new CommandEvent(username, command, args, tags));
+            EventBus.instance().postAsync(new CommandEvent(username, command, alias, args, tags));
         } else {
-            ScriptEventManager.instance().onEvent(new CommandEvent(username, command, args));
+            EventBus.instance().postAsync(new CommandEvent(username, command, alias, args));
         }
     }
 
@@ -48,88 +57,15 @@
         sender = sender.toLowerCase();
         command = command.toLowerCase();
 
-        if ($.inidb.exists('pricecom', command) && parseInt($.inidb.get('pricecom', command)) > 0) {
-            if ((((isMod && $.getIniDbBoolean('settings', 'pricecomMods', false) && !$.isBot(sender)) || !isMod))) {
-                $.inidb.incr('points', sender, $.inidb.get('pricecom', command));
-            }
-        }
-    }
+        let cost = $.getIniDbNumber('pricecom', command, 0);
 
-    /*
-     * @function permCom
-     *
-     * @export $
-     * @param {string} username
-     * @param {string} command
-     * @param {sub} subcommand
-     * @returns 0 = good, 1 = command perm bad, 2 = subcommand perm bad
-     */
-    function permCom(username, command, subcommand, tags) {
-        var commandGroup, allowed;
-        if (subcommand === '') {
-            commandGroup = $.getCommandGroup(command);
-        } else {
-            commandGroup = $.getSubcommandGroup(command, subcommand);
+        if (cost <= 0) {
+            return;
         }
 
-        switch (commandGroup) {
-            case 0:
-                allowed = $.isCaster(username);
-                break;
-            case 1:
-                allowed = $.isAdmin(username);
-                break;
-            case 2:
-                allowed = $.isModv3(username, tags);
-                break;
-            case 3:
-                if ($.isSwappedSubscriberVIP()) {
-                    allowed = $.isVIP(username, tags) || $.isModv3(username, tags);
-                } else {
-                    allowed = $.isSubv3(username, tags) || $.isModv3(username, tags);
-                }
-                break;
-            case 4:
-                allowed = $.isDonator(username) || $.isModv3(username, tags);
-                break;
-            case 5:
-                if ($.isSwappedSubscriberVIP()) {
-                    allowed = $.isSubv3(username, tags) || $.isModv3(username, tags);
-                } else {
-                    allowed = $.isVIP(username, tags) || $.isModv3(username, tags);
-                }
-                break;
-            case 6:
-                allowed = $.isReg(username) || $.isModv3(username, tags);
-                break;
-            default:
-                allowed = true;
-                break;
+        if ((((isMod && $.getIniDbBoolean('settings', 'pricecomMods', false) && !$.isBot(sender)) || !isMod))) {
+            $.inidb.incr('points', sender, cost);
         }
-
-        return allowed ? 0 : (subcommand === '' ? 1 : 2);
-    }
-
-    /*
-     * @function priceCom
-     *
-     * @export $
-     * @param {string} username
-     * @param {string} command
-     * @param {sub} subcommand
-     * @param {bool} isMod
-     * @returns 1 | 0 - Not a boolean
-     */
-    function priceCom(username, command, subCommand, isMod) {
-        if ((subCommand !== '' && $.inidb.exists('pricecom', command + ' ' + subCommand)) || $.inidb.exists('pricecom', command)) {
-            if ((((isMod && $.getIniDbBoolean('settings', 'pricecomMods', false) && !$.isBot(username)) || !isMod)) && $.bot.isModuleEnabled('./systems/pointSystem.js')) {
-                if ($.getUserPoints(username) < getCommandPrice(command, subCommand, '')) {
-                    return 1;
-                }
-                return 0;
-            }
-        }
-        return -1;
     }
 
     /*
@@ -144,27 +80,6 @@
     }
 
     /*
-     * @function getCommandPrice
-     *
-     * @export $
-     * @param {string} command
-     * @param {string} subCommand
-     * @param {string} subCommandAction
-     * @returns {Number}
-     */
-    function getCommandPrice(command, subCommand, subCommandAction) {
-        command = command.toLowerCase();
-        subCommand = subCommand.toLowerCase();
-        subCommandAction = subCommandAction.toLowerCase();
-        return parseInt($.inidb.exists('pricecom', command + ' ' + subCommand + ' ' + subCommandAction) ?
-                $.inidb.get('pricecom', command + ' ' + subCommand + ' ' + subCommandAction) :
-                $.inidb.exists('pricecom', command + ' ' + subCommand) ?
-                $.inidb.get('pricecom', command + ' ' + subCommand) :
-                $.inidb.exists('pricecom', command) ?
-                $.inidb.get('pricecom', command) : 0);
-    }
-
-    /*
      * @function getCommandPay
      *
      * @export $
@@ -172,7 +87,7 @@
      * @returns {Number}
      */
     function getCommandPay(command) {
-        return ($.inidb.exists('paycom', command) ? $.inidb.get('paycom', command) : 0);
+        return $.getIniDbNumber('paycom', command, 0);
     }
 
     /*
@@ -184,8 +99,13 @@
                     i;
             for (i in commands) {
                 if (!$.commandExists(commands[i])) {
-                    customCommands[commands[i]] = $.inidb.get('command', commands[i]);
-                    $.registerChatCommand('./commands/customCommands.js', commands[i], 7);
+                    _lock.lock();
+                    try {
+                        customCommands[commands[i]] = $.getIniDbString('command', commands[i]);
+                    } finally {
+                        _lock.unlock();
+                    }
+                    $.registerChatCommand('./commands/customCommands.js', commands[i], $.PERMISSION.Viewer);
                 }
             }
         }
@@ -200,7 +120,7 @@
                     i;
             for (i in aliases) {
                 if (!$.commandExists(aliases[i])) {
-                    $.registerChatCommand('./commands/customCommands.js', aliases[i], $.getIniDbNumber('permcom', aliases[i], 7));
+                    $.registerChatCommand('./commands/customCommands.js', aliases[i], $.getIniDbNumber('permcom', aliases[i], $.PERMISSION.Viewer));
                     $.registerChatAlias(aliases[i]);
                 }
             }
@@ -208,8 +128,27 @@
     }
 
     /*
+     * @function refuseAdminOnlyEdit
+     *
+     * @param {string} sender
+     * @param {object} event
+     * @param {string} action the custom command
+     * @returns {boolean} true, after saying so, if the command is (adminonlyedit) and the sender is not an admin
+     */
+    function refuseAdminOnlyEdit(sender, event, action) {
+        if ($.getIniDbString('command', action).match(/\(adminonlyedit\)/) && !$.checkUserPermission(sender, event.getTags(), $.PERMISSION.Admin)) {
+            if ($.getIniDbBoolean('settings', 'permComMsgEnabled', true)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('cmd.perm.404', $.getGroupNameById($.PERMISSION.Admin)));
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    /*
      * @event command
-     * @usestransformers global
+     * @usestransformers global twitch commandevent noevent
      */
     $.bind('command', function (event) {
         var sender = event.getSender(),
@@ -222,19 +161,24 @@
         /*
          * This handles custom commands, no command path is needed.
          */
-        if (customCommands[command] !== undefined
-                && !$.inidb.exists('disabledCommands', command)) {
-            var tag = $.tags(event, customCommands[command], true);
-            if (tag !== null) {
-                $.say(tag);
+        _lock.lock();
+        try {
+            if (customCommands[command] !== undefined
+                    && !$.inidb.exists('disabledCommands', command)) {
+                var tag = $.transformers.tags(event, customCommands[command], ['twitch', ['commandevent', 'noevent']], {atEnabled: $.getIniDbBoolean('settings', 'customCommandAtEnabled', true)});
+                if (tag !== null) {
+                    $.say(tag);
+                }
+                return;
             }
-            return;
+        } finally {
+            _lock.unlock();
         }
 
         /*
          * @commandpath addcom [command] [command response] - Adds a custom command
          */
-        if (command.equalsIgnoreCase('addcom')) {
+        if ($.equalsIgnoreCase(command, 'addcom')) {
             if (action === undefined || subAction === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.add.usage'));
                 return;
@@ -265,18 +209,24 @@
             $.logCustomCommand({
                 'add.command': '!' + action,
                 'add.response': argsString,
-                'sender': sender,
+                'sender': sender
             });
             $.registerChatCommand('./commands/customCommands.js', action);
             $.inidb.set('command', action, argsString);
-            customCommands[action] = argsString;
+            _lock.lock();
+            try {
+                customCommands[action] = argsString;
+            } finally {
+                _lock.unlock();
+            }
+
             return;
         }
 
         /*
          * @commandpath editcom [command] [command response] - Edits the current response of that command
          */
-        if (command.equalsIgnoreCase('editcom')) {
+        if ($.equalsIgnoreCase(command, 'editcom')) {
             if (action === undefined || subAction === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.edit.usage'));
                 return;
@@ -288,16 +238,21 @@
             if (!$.commandExists(action)) {
                 $.say($.whisperPrefix(sender) + $.lang.get('cmd.404', action));
                 return;
-            } else if ($.commandExists(action) && !$.inidb.exists('command', action)) {
-                if ($.inidb.exists('aliases', action)) {
-                    $.say($.whisperPrefix(sender) + $.lang.get('customcommands.edit.editcom.alias', $.inidb.get('aliases', action), argsString));
+            }
+
+            let commandAction = $.optIniDbString('command', action);
+            if ($.commandExists(action) && !commandAction.isPresent()) {
+                let commandAlias = $.optIniDbString('aliases', action);
+                if (commandAlias.isPresent()) {
+                    $.say($.whisperPrefix(sender) + $.lang.get('customcommands.edit.editcom.alias', commandAlias.get(), argsString));
                 } else {
                     $.say($.whisperPrefix(sender) + $.lang.get('customcommands.edit.404'));
                 }
                 return;
-            } else if ($.inidb.get('command', action).match(/\(adminonlyedit\)/) && !$.isAdmin(sender)) {
+            }
+            if (commandAction.get().match(/\(adminonlyedit\)/) && !$.checkUserPermission(sender, event.getTags(), $.PERMISSION.Admin)) {
                 if ($.getIniDbBoolean('settings', 'permComMsgEnabled', true)) {
-                    $.say($.whisperPrefix(sender) + $.lang.get('cmd.perm.404', $.getGroupNameById('1')));
+                    $.say($.whisperPrefix(sender) + $.lang.get('cmd.perm.404', $.getGroupNameById($.PERMISSION.Admin)));
                 }
                 return;
             }
@@ -306,18 +261,24 @@
             $.logCustomCommand({
                 'edit.command': '!' + action,
                 'edit.response': argsString,
-                'sender': sender,
+                'sender': sender
             });
-            $.registerChatCommand('./commands/customCommands.js', action, 7);
+            $.registerChatCommand('./commands/customCommands.js', action, $.PERMISSION.Viewer);
             $.inidb.set('command', action, argsString);
-            customCommands[action] = argsString;
+            _lock.lock();
+            try {
+                customCommands[action] = argsString;
+            } finally {
+                _lock.unlock();
+            }
+
             return;
         }
 
         /*
          * @commandpath tokencom [command] [token] - Stores a user/pass or API key to be replaced into a (customapi) tag. WARNING: This should be done from the bot console or web panel, if you run this from chat, anyone watching chat can copy your info!
          */
-        if (command.equalsIgnoreCase('tokencom')) {
+        if ($.equalsIgnoreCase(command, 'tokencom')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.token.usage'));
                 return;
@@ -329,15 +290,15 @@
             var silent = false;
             if (action.startsWith('silent@')) {
                 silent = true;
-                action = action.substr(7);
+                action = action.slice(7);
             }
 
             if (!$.commandExists(action)) {
                 $.say($.whisperPrefix(sender) + $.lang.get('cmd.404', action));
                 return;
-            } else if ($.inidb.get('command', action).match(/\(adminonlyedit\)/) && !$.isAdmin(sender)) {
+            } else if ($.getIniDbString('command', action).match(/\(adminonlyedit\)/) && !$.checkUserPermission(sender, event.getTags(), $.PERMISSION.Admin)) {
                 if ($.getIniDbBoolean('settings', 'permComMsgEnabled', true)) {
-                    $.say($.whisperPrefix(sender) + $.lang.get('cmd.perm.404', $.getGroupNameById('1')));
+                    $.say($.whisperPrefix(sender) + $.lang.get('cmd.perm.404', $.getGroupNameById($.PERMISSION.Admin)));
                 }
                 return;
             }
@@ -355,9 +316,85 @@
         }
 
         /*
+         * @commandpath secretcom [command] (secret) (header) - Ties a saved API secret to the command, so each (api) request of the command sends it in the header, Authorization as Bearer if left out. Without a secret, shows which one is tied
+         */
+        if ($.equalsIgnoreCase(command, 'secretcom')) {
+            if (action === undefined) {
+                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.secret.usage'));
+                return;
+            }
+
+            action = $.jsString(action).replace('!', '').toLowerCase();
+
+            if (!$.inidb.exists('command', action)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('cmd.404', action));
+                return;
+            }
+
+            if (subAction === undefined) {
+                let tie = $.optIniDbString('apiCommandSecrets', action);
+                if (tie.isPresent()) {
+                    tie = JSON.parse(tie.get());
+                    $.say($.whisperPrefix(sender) + $.lang.get('customcommands.secret.show', action, tie.secret, tie.header));
+                } else {
+                    $.say($.whisperPrefix(sender) + $.lang.get('customcommands.secret.none', action));
+                }
+                return;
+            }
+
+            if (refuseAdminOnlyEdit(sender, event, action)) {
+                return;
+            }
+
+            let secret = $.jsString(subAction).toLowerCase(),
+                    header = args[2] === undefined ? 'Authorization' : $.jsString(args[2]);
+
+            // Only secrets saved in the panel can be tied
+            if (!$.inidb.exists('apiSecrets', secret)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.secret.404'));
+                return;
+            }
+
+            if (!/^[\w-]+$/.test(header)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.secret.header'));
+                return;
+            }
+
+            $.inidb.set('apiCommandSecrets', action, JSON.stringify({secret: secret, header: header}));
+            $.say($.whisperPrefix(sender) + $.lang.get('customcommands.secret.success', secret, action, header));
+            return;
+        }
+
+        /*
+         * @commandpath delsecretcom [command] - Stops sending the API secret tied to the command
+         */
+        if ($.equalsIgnoreCase(command, 'delsecretcom')) {
+            if (action === undefined) {
+                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.delsecret.usage'));
+                return;
+            }
+
+            action = $.jsString(action).replace('!', '').toLowerCase();
+
+            if (!$.inidb.exists('command', action)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('cmd.404', action));
+                return;
+            } else if (refuseAdminOnlyEdit(sender, event, action)) {
+                return;
+            } else if (!$.inidb.exists('apiCommandSecrets', action)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.secret.none', action));
+                return;
+            }
+
+            $.inidb.del('apiCommandSecrets', action);
+            $.say($.whisperPrefix(sender) + $.lang.get('customcommands.delsecret.success', action));
+            return;
+        }
+
+        /*
          * @commandpath delcom [command] - Delete that custom command
          */
-        if (command.equalsIgnoreCase('delcom')) {
+        if ($.equalsIgnoreCase(command, 'delcom')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.delete.usage'));
                 return;
@@ -373,7 +410,7 @@
             $.say($.whisperPrefix(sender) + $.lang.get('customcommands.delete.success', action));
             $.logCustomCommand({
                 'delete.command': '!' + action,
-                'sender': sender,
+                'sender': sender
             });
             $.inidb.del('command', action);
             $.inidb.del('permcom', action);
@@ -382,22 +419,39 @@
             $.inidb.del('disabledCommands', action);
             $.inidb.del('hiddenCommands', action);
             $.inidb.del('commandtoken', action);
+            $.inidb.del('apiCommandSecrets', action);
             $.unregisterChatCommand(action);
-            delete customCommands[action];
+            _lock.lock();
+            try {
+                delete customCommands[action];
+            } finally {
+                _lock.unlock();
+            }
+
             return;
         }
 
         /*
          * @commandpath aliascom [alias name] [existing command] - Create an alias to any command
          */
-        if (command.equalsIgnoreCase('aliascom')) {
+        if ($.equalsIgnoreCase(command, 'aliascom')) {
             if (action === undefined || subAction === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.alias.usage'));
                 return;
             }
 
-            action = action.replace('!', '').toLowerCase();
-            subAction = args.slice(1).join(' ').replace('!', '').toLowerCase();
+            if (action.startsWith('!')) {
+                action = action.substring(1);
+            }
+
+            action = action.toLowerCase();
+            subAction = args.slice(1).join(' ');
+
+            if (subAction.startsWith('!')) {
+                subAction = action.substring(1);
+            }
+
+            subAction = subAction.toLowerCase();
 
             if ($.commandExists(action)) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.alias.error.exists'));
@@ -414,7 +468,7 @@
             $.logCustomCommand({
                 'alias.command': '!' + action,
                 'alias.target': '!' + subAction,
-                'sender': sender,
+                'sender': sender
             });
             $.registerChatCommand('./commands/customCommands.js', action);
             $.inidb.set('aliases', action, subAction);
@@ -425,7 +479,7 @@
         /*
          * @commandpath delalias [alias] - Delete that alias
          */
-        if (command.equalsIgnoreCase('delalias')) {
+        if ($.equalsIgnoreCase(command, 'delalias')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.alias.delete.usage'));
                 return;
@@ -441,7 +495,7 @@
             $.say($.whisperPrefix(sender) + $.lang.get('customcommands.alias.delete.success', action));
             $.logCustomCommand({
                 'alias.delete.command': '!' + action,
-                'sender': sender,
+                'sender': sender
             });
             $.unregisterChatCommand(action);
             $.inidb.del('aliases', action);
@@ -451,7 +505,7 @@
         /*
          * @commandpath permcom [command] [groupId] - Set the permissions for any command
          */
-        if (command.equalsIgnoreCase('permcom')) {
+        if ($.equalsIgnoreCase(command, 'permcom')) {
             if (action === undefined || subAction === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.perm.usage'));
                 return;
@@ -466,29 +520,30 @@
                 if (!$.commandExists(action)) {
                     $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.perm.404', action));
                     return;
-                } else if (isNaN(parseInt(group))) {
-                    group = $.getGroupIdByName(group);
-                    if ($.isSwappedSubscriberVIP() && group == 3) {
-                        group = 5;
-                    } else if ($.isSwappedSubscriberVIP() && group == 5) {
-                        group = 3;
-                    }
                 }
 
-                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.perm.success', action, $.getGroupNameById(group)));
+                if (isNaN(parseInt(group))) {
+                    group = $.getGroupIdByName(group);
+                } else {
+                    group = parseInt(group);
+                }
+
+                var groupname = $.getGroupNameById(group);
+
+                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.perm.success', action, groupname));
                 $.logCustomCommand({
                     'set.perm.command': '!' + action,
-                    'set.perm.group': $.getGroupNameById(group),
-                    'sender': sender,
+                    'set.perm.group': groupname,
+                    'sender': sender
                 });
 
                 var list = $.inidb.GetKeyList('aliases', ''),
                         i;
 
                 for (i in list) {
-                    if (list[i].equalsIgnoreCase(action)) {
-                        $.inidb.set('permcom', $.inidb.get('aliases', list[i]), group);
-                        $.updateCommandGroup($.inidb.get('aliases', list[i]), group);
+                    if ($.equalsIgnoreCase(list[i], action)) {
+                        $.inidb.set('permcom', $.getIniDbString('aliases', list[i]), group);
+                        $.updateCommandGroup($.getIniDbString('aliases', list[i]), group);
                     }
                 }
 
@@ -500,15 +555,21 @@
                 if (!$.subCommandExists(action, subAction)) {
                     $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.perm.404', action + ' ' + subAction));
                     return;
-                } else if (isNaN(parseInt(group))) {
-                    group = $.getGroupIdByName(group);
                 }
 
-                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.perm.success', action + ' ' + subAction, $.getGroupNameById(group)));
+                if (isNaN(parseInt(group))) {
+                    group = $.getGroupIdByName(group);
+                } else {
+                    group = parseInt(group);
+                }
+
+                var groupname = $.getGroupNameById(group);
+
+                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.perm.success', action + ' ' + subAction, groupname));
                 $.logCustomCommand({
                     'set.perm.command': '!' + action + ' ' + subAction,
-                    'set.perm.group': $.getGroupNameById(group),
-                    'sender': sender,
+                    'set.perm.group': groupname,
+                    'sender': sender
                 });
                 $.inidb.set('permcom', action + ' ' + subAction, group);
                 $.updateSubcommandGroup(action, subAction, group);
@@ -519,7 +580,7 @@
         /*
          * @commandpath pricecom [command] [amount] - Set the amount of points a command should cost
          */
-        if (command.equalsIgnoreCase('pricecom')) {
+        if ($.equalsIgnoreCase(command, 'pricecom')) {
             if (action === undefined || subAction === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.price.usage'));
                 return;
@@ -542,7 +603,7 @@
                 $.logCustomCommand({
                     'set.price.command': '!' + action,
                     'set.price.amount': subAction,
-                    'sender': sender,
+                    'sender': sender
                 });
                 $.inidb.set('pricecom', action, subAction);
 
@@ -550,10 +611,10 @@
                         i;
 
                 for (i in list) {
-                    if (list[i].equalsIgnoreCase(action)) {
-                        $.inidb.set('pricecom', $.inidb.get('aliases', list[i]), parseInt(subAction));
+                    if ($.equalsIgnoreCase(list[i], action)) {
+                        $.inidb.set('pricecom', $.getIniDbString('aliases', list[i]), parseInt(subAction));
                     }
-                    if ($.inidb.get('aliases', list[i]).includes(action)) {
+                    if ($.getIniDbString('aliases', list[i]).includes(action)) {
                         $.inidb.set('pricecom', list[i], parseInt(subAction));
                     }
                 }
@@ -567,7 +628,7 @@
                 $.logCustomCommand({
                     'set.price.command': '!' + action + ' ' + subAction,
                     'set.price.amount': args[2],
-                    'sender': sender,
+                    'sender': sender
                 });
                 $.inidb.set('pricecom', action + ' ' + subAction, args[2]);
             } else {
@@ -581,7 +642,7 @@
                     $.logCustomCommand({
                         'set.price.command': '!' + action + ' ' + subAction + ' ' + args[2],
                         'set.price.amount': args[3],
-                        'sender': sender,
+                        'sender': sender
                     });
                     $.inidb.set('pricecom', action + ' ' + subAction + ' ' + args[2], args[3]);
                 }
@@ -592,7 +653,7 @@
         /*
          * @commandpath paycom [command] [amount] - Set the amount of points a command should reward a viewer
          */
-        if (command.equalsIgnoreCase('paycom')) {
+        if ($.equalsIgnoreCase(command, 'paycom')) {
             if (action === undefined || subAction === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.set.pay.usage'));
                 return;
@@ -612,7 +673,7 @@
             $.logCustomCommand({
                 'set.pay.command': '!' + action,
                 'set.pay.amount': subAction,
-                'sender': sender,
+                'sender': sender
             });
             $.inidb.set('paycom', action, subAction);
 
@@ -620,10 +681,10 @@
                     i;
 
             for (i in list) {
-                if (list[i].equalsIgnoreCase(action)) {
-                    $.inidb.set('paycom', $.inidb.get('aliases', list[i]), subAction);
+                if ($.equalsIgnoreCase(list[i], action)) {
+                    $.inidb.set('paycom', $.getIniDbString('aliases', list[i]), subAction);
                 }
-                if ($.inidb.get('aliases', list[i]).includes(action)) {
+                if ($.getIniDbString('aliases', list[i]).includes(action)) {
                     $.inidb.set('paycom', list[i], subAction);
                 }
             }
@@ -633,26 +694,26 @@
         /*
          * @commandpath commands - Provides a list of all available custom commands.
          */
-        if (command.equalsIgnoreCase('commands')) {
+        if ($.equalsIgnoreCase(command, 'commands')) {
             var cmds = $.inidb.GetKeyList('command', ''),
-                aliases = $.inidb.GetKeyList('aliases', ''),
-                externalCommands = $.inidb.GetKeyList('externalCommands', ''),
-                cmdList = [];
+                    aliases = $.inidb.GetKeyList('aliases', ''),
+                    externalCommands = $.inidb.GetKeyList('externalCommands', ''),
+                    cmdList = [];
 
             for (idx in cmds) {
                 if (!$.inidb.exists('disabledCommands', cmds[idx])
                         && !$.inidb.exists('hiddenCommands', cmds[idx])
-                        && permCom(sender, cmds[idx], '') === 0) {
+                        && $.permCom(sender, cmds[idx], '') === 0) {
                     cmdList.push('!' + cmds[idx]);
                 }
             }
 
             for (idx in aliases) {
-                var aliasCmd = $.inidb.get('aliases', aliases[idx]);
+                var aliasCmd = $.getIniDbString('aliases', aliases[idx]);
 
                 if (!$.inidb.exists('disabledCommands', aliases[idx])
                         && !$.inidb.exists('hiddenCommands', aliases[idx])
-                        && permCom(sender, aliasCmd, '') === 0) {
+                        && $.permCom(sender, aliasCmd, '') === 0) {
                     cmdList.push('!' + aliases[idx]);
                 }
             }
@@ -672,7 +733,7 @@
         /*
          * @commandpath botcommands - Will show you all of the bots commands
          */
-        if (command.equalsIgnoreCase('botcommands')) {
+        if ($.equalsIgnoreCase(command, 'botcommands')) {
             var cmds = $.inidb.GetKeyList('permcom', ''),
                     idx,
                     totalPages,
@@ -682,7 +743,9 @@
                 if (cmds[idx].indexOf(' ') !== -1) {
                     continue;
                 }
-                if (permCom(sender, cmds[idx], '') === 0) {
+                if (!$.inidb.exists('disabledCommands', cmds[idx])
+                        && !$.inidb.exists('hiddenCommands', cmds[idx])
+                        && $.permCom(sender, cmds[idx], '') === 0) {
                     cmdList.push('!' + cmds[idx]);
                 }
             }
@@ -700,64 +763,9 @@
         }
 
         /*
-         * @commandpath disablecom [command] - Disable a command from being used in chat
-         */
-        if (command.equalsIgnoreCase('disablecom')) {
-            if (action === undefined) {
-                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.disable.usage'));
-                return;
-            }
-
-            action = action.replace('!', '').toLowerCase();
-
-            if ($.inidb.exists('disabledCommands', action)) {
-                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.disable.err'));
-                return;
-            } else if (!$.commandExists(action) || $.jsString(action) === 'disablecom' || $.jsString(action) === 'enablecom') {
-                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.disable.404'));
-                return;
-            }
-
-            $.say($.whisperPrefix(sender) + $.lang.get('customcommands.disable.success', action));
-            $.logCustomCommand({
-                'disable.command': '!' + action,
-                'sender': sender,
-            });
-            $.inidb.set('disabledCommands', action, true);
-            $.tempUnRegisterChatCommand(action);
-            return;
-        }
-
-        /*
-         * @commandpath enablecom [command] - Enable a command thats been disabled from being used in chat
-         */
-        if (command.equalsIgnoreCase('enablecom')) {
-            if (action === undefined) {
-                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.enable.usage'));
-                return;
-            }
-
-            action = action.replace('!', '').toLowerCase();
-
-            if (!$.inidb.exists('disabledCommands', action)) {
-                $.say($.whisperPrefix(sender) + $.lang.get('customcommands.enable.err'));
-                return;
-            }
-
-            $.say($.whisperPrefix(sender) + $.lang.get('customcommands.enable.success', action));
-            $.logCustomCommand({
-                'enable.command': '!' + action,
-                'sender': sender,
-            });
-            $.inidb.del('disabledCommands', action);
-            $.registerChatCommand(($.inidb.exists('tempDisabledCommandScript', action) ? $.inidb.get('tempDisabledCommandScript', action) : './commands/customCommands.js'), action);
-            return;
-        }
-
-        /*
          * @commandpath hidecom [command] - Hide a command in the !commands list
          */
-        if (command.equalsIgnoreCase('hidecom')) {
+        if ($.equalsIgnoreCase(command, 'hidecom')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.hide.usage'));
                 return;
@@ -776,7 +784,7 @@
             $.say($.whisperPrefix(sender) + $.lang.get('customcommands.hide.success', action));
             $.logCustomCommand({
                 'hide.command': '!' + action,
-                'sender': sender,
+                'sender': sender
             });
             $.inidb.set('hiddenCommands', action, true);
             return;
@@ -785,7 +793,7 @@
         /*
          * @commandpath showcom [command] - Adds a command that's been hidden back to the !commands list
          */
-        if (command.equalsIgnoreCase('showcom')) {
+        if ($.equalsIgnoreCase(command, 'showcom')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.show.usage'));
                 return;
@@ -801,7 +809,7 @@
             $.say($.whisperPrefix(sender) + $.lang.get('customcommands.show.success', action));
             $.logCustomCommand({
                 'show.command': '!' + action,
-                'sender': sender,
+                'sender': sender
             });
             $.inidb.del('hiddenCommands', action);
             return;
@@ -810,7 +818,7 @@
         /*
          * @commandpath addextcom [command] - Adds a external command (only added to !commands list)
          */
-        if (command.equalsIgnoreCase('addextcom')) {
+        if ($.equalsIgnoreCase(command, 'addextcom')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.external.add.usage'));
                 return;
@@ -826,7 +834,7 @@
             $.say($.whisperPrefix(sender) + $.lang.get('customcommands.external.add.success', action));
             $.logCustomCommand({
                 'external.add.command': '!' + action,
-                'sender': sender,
+                'sender': sender
             });
             $.inidb.set('externalCommands', action, true);
             return;
@@ -835,7 +843,7 @@
         /*
          * @commandpath delextcom [command] - Delete that external command
          */
-        if (command.equalsIgnoreCase('delextcom')) {
+        if ($.equalsIgnoreCase(command, 'delextcom')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.external.delete.usage'));
                 return;
@@ -851,7 +859,7 @@
             $.say($.whisperPrefix(sender) + $.lang.get('customcommands.external.delete.success', action));
             $.logCustomCommand({
                 'external.delete.command': '!' + action,
-                'sender': sender,
+                'sender': sender
             });
             $.inidb.del('externalCommands', action);
             return;
@@ -860,7 +868,7 @@
         /*
          * @commandpath resetcom [command] [count] - Resets the counter to zero, for a command that uses the (count) tag or optionally set to a specific value.
          */
-        if (command.equalsIgnoreCase('resetcom')) {
+        if ($.equalsIgnoreCase(command, 'resetcom')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('customcommands.reset.usage'));
                 return;
@@ -873,7 +881,7 @@
                 $.logCustomCommand({
                     'reset.command': '!' + action,
                     'reset.count': 0,
-                    'sender': sender,
+                    'sender': sender
                 });
                 $.inidb.del('commandCount', action);
             } else {
@@ -885,7 +893,7 @@
                     $.logCustomCommand({
                         'reset.command': '!' + action,
                         'reset.count': subAction,
-                        'sender': sender,
+                        'sender': sender
                     });
                 }
             }
@@ -897,64 +905,74 @@
      * @event initReady
      */
     $.bind('initReady', function () {
-        $.registerChatCommand('./commands/customCommands.js', 'addcom', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'pricecom', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'paycom', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'aliascom', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'delalias', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'delcom', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'editcom', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'tokencom', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'permcom', 1);
-        $.registerChatCommand('./commands/customCommands.js', 'commands', 7);
-        $.registerChatCommand('./commands/customCommands.js', 'disablecom', 1);
-        $.registerChatCommand('./commands/customCommands.js', 'enablecom', 1);
-        $.registerChatCommand('./commands/customCommands.js', 'hidecom', 1);
-        $.registerChatCommand('./commands/customCommands.js', 'showcom', 1);
-        $.registerChatCommand('./commands/customCommands.js', 'addextcom', 1);
-        $.registerChatCommand('./commands/customCommands.js', 'delextcom', 1);
-        $.registerChatCommand('./commands/customCommands.js', 'botcommands', 2);
-        $.registerChatCommand('./commands/customCommands.js', 'resetcom', 2);
+        $.registerChatCommand('./commands/customCommands.js', 'addcom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'pricecom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'paycom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'aliascom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'delalias', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'delcom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'editcom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'tokencom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'secretcom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'delsecretcom', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'permcom', $.PERMISSION.Admin);
+        $.registerChatCommand('./commands/customCommands.js', 'commands', $.PERMISSION.Viewer);
+        $.registerChatCommand('./commands/customCommands.js', 'hidecom', $.PERMISSION.Admin);
+        $.registerChatCommand('./commands/customCommands.js', 'showcom', $.PERMISSION.Admin);
+        $.registerChatCommand('./commands/customCommands.js', 'addextcom', $.PERMISSION.Admin);
+        $.registerChatCommand('./commands/customCommands.js', 'delextcom', $.PERMISSION.Admin);
+        $.registerChatCommand('./commands/customCommands.js', 'botcommands', $.PERMISSION.Mod);
+        $.registerChatCommand('./commands/customCommands.js', 'resetcom', $.PERMISSION.Mod);
     });
 
     /*
      * @event webPanelSocketUpdate
      */
     $.bind('webPanelSocketUpdate', function (event) {
-        var handleExtraCooldown = function(commandLower, extra) {
-            if (extra.cooldown != null) {
-                $.coolDown.add(commandLower, parseInt(extra.cooldown.seconds), extra.cooldown.seconds.cooldown);
-            }
-        };
-        var handleExtraDisabled = function(commandLower, extra) {
-            if (extra.disabled != null) {
+        var handleExtraDisabled = function (commandLower, extra) {
+            if (extra.disabled !== null) {
                 if (extra.disabled) {
                     $.tempUnRegisterChatCommand(commandLower);
                 } else {
-                    $.registerChatCommand(($.inidb.exists('tempDisabledCommandScript', commandLower) ? $.inidb.get('tempDisabledCommandScript', commandLower) : './commands/customCommands.js'), commandLower);
+                    $.registerChatCommand($.getIniDbString('tempDisabledCommandScript', commandLower, './commands/customCommands.js'), commandLower);
                 }
             }
         };
 
-        if (event.getScript().equalsIgnoreCase('./commands/customCommands.js')) {
+        if ($.equalsIgnoreCase(event.getScript(), './commands/customCommands.js')) {
             var args = event.getArgs(),
-                eventName = args[0] + '',
-                command = args[1] + '',
-                commandLower = command.toLowerCase() + '',
-                extra = args[3] == null ? {} : JSON.parse(args[3]);
+                    eventName = args[0] + '',
+                    command = args[1] + '',
+                    commandLower = command.toLowerCase() + '',
+                    extra = (args[3] === null || args[3] === undefined) ? {} : JSON.parse(args[3]);
             if (eventName === 'remove') {
-                if (customCommands[commandLower] !== undefined) {
-                    delete customCommands[commandLower];
-                    $.unregisterChatCommand(commandLower);
-                    $.coolDown.remove(commandLower);
+                _lock.lock();
+                try {
+                    if (customCommands[commandLower] !== undefined) {
+                        delete customCommands[commandLower];
+                        $.unregisterChatCommand(commandLower);
+                        $.coolDown.remove(commandLower);
+                    }
+                } finally {
+                    _lock.unlock();
                 }
             } else if (eventName === 'add') {
-                customCommands[commandLower] = args[2];
+                _lock.lock();
+                try {
+                    customCommands[commandLower] = args[2];
+                } finally {
+                    _lock.unlock();
+                }
+
                 $.registerChatCommand('./commands/customCommands.js', commandLower);
-                handleExtraCooldown(commandLower, extra);
             } else if (eventName === 'edit') {
-                customCommands[commandLower] = args[2];
-                handleExtraCooldown(commandLower, extra);
+                _lock.lock();
+                try {
+                    customCommands[commandLower] = args[2];
+                } finally {
+                    _lock.unlock();
+                }
+
                 handleExtraDisabled(commandLower, extra);
             } else if (eventName === 'removeAlias') {
                 $.unregisterChatCommand(commandLower);
@@ -962,11 +980,9 @@
             } else if (eventName === 'addAlias') {
                 $.registerChatCommand('./commands/customCommands.js', commandLower);
                 $.registerChatAlias(commandLower);
-                handleExtraCooldown(commandLower, extra);
             } else if (eventName === 'editAlias') {
                 $.registerChatCommand('./commands/customCommands.js', commandLower);
                 $.registerChatAlias(commandLower);
-                handleExtraCooldown(commandLower, extra);
                 handleExtraDisabled(commandLower, extra);
             }
         }
@@ -978,9 +994,6 @@
     $.addComRegisterCommands = addComRegisterCommands;
     $.addComRegisterAliases = addComRegisterAliases;
     $.returnCommandCost = returnCommandCost;
-    $.permCom = permCom;
-    $.priceCom = priceCom;
-    $.getCommandPrice = getCommandPrice;
     $.getCommandPay = getCommandPay;
     $.payCom = payCom;
     $.command = {

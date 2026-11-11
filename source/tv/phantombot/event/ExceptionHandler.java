@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +19,15 @@ package tv.phantombot.event;
 import net.engio.mbassy.bus.error.IPublicationErrorHandler;
 import net.engio.mbassy.bus.error.PublicationError;
 
+/**
+ * Error handler for {@link EventBus}
+ */
 public class ExceptionHandler implements IPublicationErrorHandler {
 
     @Override
     public void handleError(PublicationError err) {
-        com.gmt2001.Console.err.println("Failed to dispatch event [" + err.getHandler().toString() + "] to [" + err.getListener().toString() + "] " + err.getCause().getMessage());
+        com.gmt2001.Console.err.println("Failed to dispatch event " + err.toString());
+
         com.gmt2001.Console.err.printStackTrace(err.getCause());
     }
 }

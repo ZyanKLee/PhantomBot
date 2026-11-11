@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@
      * @event webPanelSocketUpdate
      */
     $.bind('webPanelSocketUpdate', function(event) {
-        if (event.getScript().equalsIgnoreCase('./discord/handlers/streamElementsHandler.js')) {
+        if ($.equalsIgnoreCase(event.getScript(), './discord/handlers/streamElementsHandler.js')) {
             toggle = $.getIniDbBoolean('discordSettings', 'streamelementsToggle', false);
             message = $.getIniDbString('discordSettings', 'streamelementsMessage', 'Thank you very much (name) for the tip of $(amount) (currency)!');
             channelName = $.getIniDbString('discordSettings', 'streamelementsChannel', '');
@@ -110,7 +110,7 @@
             action = args[0],
             subAction = args[1];
 
-        if (command.equalsIgnoreCase('streamelementshandler')) {
+        if ($.equalsIgnoreCase(command, 'streamelementshandler')) {
             if (action === undefined) {
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.streamelementshandler.usage'));
                 return;
@@ -119,7 +119,7 @@
             /**
              * @discordcommandpath streamelementshandler toggle - Toggles the streamelements donation announcements.
              */
-            if (action.equalsIgnoreCase('toggle')) {
+            if ($.equalsIgnoreCase(action, 'toggle')) {
                 toggle = !toggle;
                 $.inidb.set('discordSettings', 'streamelementsToggle', toggle);
                 $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.streamelementshandler.toggle', (toggle === true ? $.lang.get('common.enabled') : $.lang.get('common.disabled'))));
@@ -128,7 +128,7 @@
             /**
              * @discordcommandpath streamelementshandler message [message] - Sets the streamelements donation announcement message.
              */
-            if (action.equalsIgnoreCase('message')) {
+            if ($.equalsIgnoreCase(action, 'message')) {
                 if (subAction === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.streamelementshandler.message.usage'));
                     return;
@@ -142,7 +142,7 @@
             /**
              * @discordcommandpath streamelementshandler channel [channel name] - Sets the channel that announcements from this module will be said in.
              */
-            if (action.equalsIgnoreCase('channel')) {
+            if ($.equalsIgnoreCase(action, 'channel')) {
                 if (subAction === undefined) {
                     $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.streamelementshandler.channel.usage'));
                     return;
@@ -156,9 +156,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/handlers/streamElementsHandler.js', 'streamelementshandler', 1);
         $.discord.registerSubCommand('streamelementshandler', 'toggle', 1);
         $.discord.registerSubCommand('streamelementshandler', 'message', 1);

@@ -55,11 +55,9 @@ Now we are ready to launch PhantomBot. You can run the bot with:
 
 `./launch.sh`
 
-Now PhantomBot should start and you can begin to use it. At this point you can enter the information it asks you for. As a reference, you can check the Windows guide for the bot account configuration.
+Now PhantomBot should start and walk you through first time setup.
 
-After the bot is configured you can press the following keys and follow the rest of the guide.
-
-`Ctrl + C`
+After the bot is configured you can press `Ctrl + C` to shut it down and follow the next steps to set it up as a background service.
 
 ### 4. Setting up a systemd Unit
 
@@ -80,6 +78,7 @@ Restart=on-failure
 RestartSec=30
 ExecStart=/home/botuser/phantombot/launch-service.sh
 KillSignal=SIGTERM
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target

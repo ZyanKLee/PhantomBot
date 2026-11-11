@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,7 +62,7 @@
 
         if (s.match(/\(message\)/g)) {
             s = $.replace(s, '(message)', ircMessage);
-            if (emoteRegexStr.length() > 0) {
+            if ($.strlen(emoteRegexStr) > 0) {
                 emoteRegex = new RegExp(emoteRegexStr, 'gi');
                 s = String(s).valueOf();
                 s = s.replace(emoteRegex, '');
@@ -82,9 +82,9 @@
             if (s.match(/\(playsound\s([a-zA-Z1-9_]+)\)/g)) {
                 if (!$.audioHookExists(s.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1])) {
                     $.log.error('Could not play audio hook: Audio hook does not exist.');
-                    return null;
+                } else {
+                    $.alertspollssocket.triggerAudioPanel(message.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1]);
                 }
-                $.alertspollssocket.triggerAudioPanel(s.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[1]);
                 s = $.replace(s, s.match(/\(playsound\s([a-zA-Z1-9_]+)\)/)[0], '');
                 if (s == '') {
                     return null;
@@ -111,7 +111,7 @@
         /*
          * @commandpath bitstoggle - Toggles the bits announcements.
          */
-        if (command.equalsIgnoreCase('bitstoggle')) {
+        if ($.equalsIgnoreCase(command, 'bitstoggle')) {
             toggle = !toggle;
             $.setIniDbBoolean('bitsSettings', 'toggle', toggle);
             $.say($.whisperPrefix(sender) + (toggle ? $.lang.get('bitshandler.toggle.on') : $.lang.get('bitshandler.toggle.off')))
@@ -121,7 +121,7 @@
         /*
          * @commandpath bitsmessage - Sets a message for when someone cheers bits.
          */
-        if (command.equalsIgnoreCase('bitsmessage')) {
+        if ($.equalsIgnoreCase(command, 'bitsmessage')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('bitshandler.message.usage'));
                 return;
@@ -135,7 +135,7 @@
         /*
          * @commandpath bitsminimum - Set how many bits someone needs to cheer before announcing it.
          */
-        if (command.equalsIgnoreCase('bitsminimum')) {
+        if ($.equalsIgnoreCase(command, 'bitsminimum')) {
             if (isNaN(parseInt(action))) {
                 $.say($.whisperPrefix(sender) + $.lang.get('bitshandler.minimum.usage'));
                 return;
@@ -152,9 +152,9 @@
      * @event initReady
      */
     $.bind('initReady', function () {
-        $.registerChatCommand('./handlers/bitsHandler.js', 'bitstoggle', 1);
-        $.registerChatCommand('./handlers/bitsHandler.js', 'bitsmessage', 1);
-        $.registerChatCommand('./handlers/bitsHandler.js', 'bitsminimum', 1);
+        $.registerChatCommand('./handlers/bitsHandler.js', 'bitstoggle', $.PERMISSION.Admin);
+        $.registerChatCommand('./handlers/bitsHandler.js', 'bitsmessage', $.PERMISSION.Admin);
+        $.registerChatCommand('./handlers/bitsHandler.js', 'bitsminimum', $.PERMISSION.Admin);
         announceBits = true;
     });
 

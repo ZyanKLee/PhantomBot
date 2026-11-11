@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,10 +16,12 @@
  */
 package tv.phantombot.httpserver;
 
+import com.gmt2001.PathValidator;
 import com.gmt2001.httpwsserver.HttpRequestHandler;
 import com.gmt2001.httpwsserver.HttpServerPageHandler;
 import com.gmt2001.httpwsserver.auth.HttpAuthenticationHandler;
 import com.gmt2001.httpwsserver.auth.HttpSharedTokenOrPasswordAuthenticationHandler;
+import com.gmt2001.util.Reflect;
 import com.scaniatv.LangFileUpdater;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -29,9 +31,13 @@ import io.netty.handler.codec.http.QueryStringDecoder;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.Objects;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.json.JSONStringer;
 import tv.phantombot.PhantomBot;
 
@@ -41,10 +47,15 @@ import tv.phantombot.PhantomBot;
  */
 public class HTTPAuthenticatedHandler implements HttpRequestHandler {
 
-    private final HttpAuthenticationHandler authHandler;
+    private static final String[] BLOCKED_DB_QUERY_TABLES = new String[]{"commandtoken", "apisecrets"};
+    private HttpAuthenticationHandler authHandler;
 
     public HTTPAuthenticatedHandler(String webAuth, String myPassword) {
-        authHandler = new HttpSharedTokenOrPasswordAuthenticationHandler(webAuth, myPassword);
+        this.authHandler = new HttpSharedTokenOrPasswordAuthenticationHandler(webAuth, myPassword);
+    }
+
+    public void updateAuth(String webAuth, String myPassword) {
+        this.authHandler = new HttpSharedTokenOrPasswordAuthenticationHandler(webAuth, myPassword);
     }
 
     @Override
@@ -65,6 +76,8 @@ public class HTTPAuthenticatedHandler implements HttpRequestHandler {
 
     @Override
     public void handleRequest(ChannelHandlerContext ctx, FullHttpRequest req) {
+        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
+
         if (req.method().equals(HttpMethod.PUT)) {
             if (req.headers().contains("lang-path")) {
                 putLang(ctx, req);
@@ -73,12 +86,11 @@ public class HTTPAuthenticatedHandler implements HttpRequestHandler {
             }
             return;
         } else if (!req.method().equals(HttpMethod.GET)) {
-            com.gmt2001.Console.debug.println("403");
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, null, null));
+            com.gmt2001.Console.debug.println("405 " + req.method().asciiName() + ": " + qsd.path());
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.METHOD_NOT_ALLOWED));
             return;
         }
 
-        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
         String path = qsd.path();
 
         if (path.startsWith("/dbquery")) {
@@ -98,14 +110,14 @@ public class HTTPAuthenticatedHandler implements HttpRequestHandler {
         try {
             Path p = Paths.get(".", path);
 
-            if (!p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./logs"))) {
+            if (!PathValidator.isValidPathWebAuth(p.toString()) || !p.toAbsolutePath().startsWith(Paths.get(Reflect.GetExecutionPath(), "./logs"))) {
                 com.gmt2001.Console.debug.println("403 " + req.method().asciiName() + ": " + p.toString());
-                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, null, null));
+                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN));
                 return;
             }
 
             if (HttpServerPageHandler.checkFilePermissions(ctx, req, p, true)) {
-                if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) {
+                if (Files.isDirectory(p)) {
                     HttpServerPageHandler.listDirectory(ctx, req, p);
                 } else {
                     com.gmt2001.Console.debug.println("200 " + req.method().asciiName() + ": " + p.toString() + " (" + p.getFileName().toString() + " = "
@@ -115,9 +127,9 @@ public class HTTPAuthenticatedHandler implements HttpRequestHandler {
                 }
             }
         } catch (IOException ex) {
-            com.gmt2001.Console.debug.println("500");
+            com.gmt2001.Console.debug.println("500 " + req.method().asciiName() + ": " + qsd.path());
             com.gmt2001.Console.debug.printStackTrace(ex);
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
         }
     }
 
@@ -132,6 +144,12 @@ public class HTTPAuthenticatedHandler implements HttpRequestHandler {
 
         String dbTable = qsd.parameters().get("table").get(0);
         String dbSection = "";
+
+        if (Arrays.stream(BLOCKED_DB_QUERY_TABLES).anyMatch(t -> t.equalsIgnoreCase(dbTable))) {
+            jsonObject.object().key("error").value("table not allowed").endObject();
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.BAD_REQUEST, jsonObject.toString().getBytes(Charset.forName("UTF-8")), "json"));
+            return;
+        }
 
         if (qsd.parameters().containsKey("section") && !qsd.parameters().get("section").isEmpty() && !qsd.parameters().get("section").get(0).isBlank()) {
             dbSection = qsd.parameters().get("section").get(0);
@@ -320,7 +338,7 @@ public class HTTPAuthenticatedHandler implements HttpRequestHandler {
         } catch (IOException ex) {
             com.gmt2001.Console.debug.println("500");
             com.gmt2001.Console.debug.printStackTrace(ex);
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
         }
     }
 
@@ -360,16 +378,36 @@ public class HTTPAuthenticatedHandler implements HttpRequestHandler {
     private void putIrc(ChannelHandlerContext ctx, FullHttpRequest req) {
         String user = req.headers().get("user");
         String msg = req.headers().get("message");
+        String body = req.content().toString(Charset.forName("UTF-8"));
+        if (body.length() > 0 && body.startsWith("{") && body.endsWith("}")) {
+            try {
+                JSONObject jso = new JSONObject(body);
+                if (jso.has("user")) {
+                    user = jso.getString("user");
+                }
+                if (jso.has("message")) {
+                    msg = jso.getString("message");
+                }
+            } catch (JSONException ex) {
+                com.gmt2001.Console.err.logStackTrace(ex);
+            }
+        }
 
         if (user == null || msg == null || user.isBlank() || msg.isBlank()) {
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.BAD_REQUEST, null, null));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.BAD_REQUEST));
             return;
         }
 
         if (msg.charAt(0) == '!') {
             PhantomBot.instance().handleCommand(user, msg.substring(1));
-        } else {
+        } else if (PhantomBot.instance().getSession() != null) {
+            if (msg.startsWith("\\!")) {
+                msg = msg.substring(1);
+            }
             PhantomBot.instance().getSession().say(msg);
+        } else {
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.SERVICE_UNAVAILABLE));
+            return;
         }
 
         com.gmt2001.Console.debug.println("200" + req.method().asciiName() + ": irc " + user + " -> " + msg);
@@ -377,10 +415,42 @@ public class HTTPAuthenticatedHandler implements HttpRequestHandler {
     }
 
     private void putLang(ChannelHandlerContext ctx, FullHttpRequest req) {
-        LangFileUpdater.updateCustomLang(req.content().toString(Charset.forName("UTF-8")), req.headers().get("lang-path"));
+        JSONStringer jso = new JSONStringer();
+        LangFileUpdater.updateCustomLang(req.content().toString(Charset.forName("UTF-8")), req.headers().get("lang-path"), jso);
 
-        com.gmt2001.Console.debug.println("200" + req.method().asciiName() + ": lang " + req.headers().get("lang-path"));
-        HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, "File Updated.".getBytes(Charset.forName("UTF-8")), "plain"));
+        JSONObject j;
+        try {
+            j = new JSONObject(jso.toString());
+        } catch (JSONException ex) {
+            com.gmt2001.Console.debug.println("500" + req.method().asciiName() + ": lang " + req.headers().get("lang-path"));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, "Unable to Check Success.".getBytes(Charset.forName("UTF-8")), "plain"));
+            com.gmt2001.Console.err.logStackTrace(ex);
+            return;
+        }
+        if (j.getBoolean("success")) {
+            com.gmt2001.Console.debug.println("200" + req.method().asciiName() + ": lang " + req.headers().get("lang-path"));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, "File Updated.".getBytes(Charset.forName("UTF-8")), "plain"));
+        } else {
+            com.gmt2001.Console.debug.println("500" + req.method().asciiName() + ": lang " + req.headers().get("lang-path"));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, j.getJSONArray("errors").getJSONObject(0).getString("detail").getBytes(Charset.forName("UTF-8")), "plain"));
+        }
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(authHandler);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        HTTPAuthenticatedHandler other = (HTTPAuthenticatedHandler) obj;
+        return Objects.equals(authHandler, other.authHandler);
     }
 
 }

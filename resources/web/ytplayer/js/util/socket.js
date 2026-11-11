@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,11 +18,13 @@
  */
 
 $(function() {
-    var socket = new WebSocket((getProtocol() === 'https://' || window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/ytplayer'),
+    window.updateCookie();
+    var socket = new ReconnectingWebSocket((getProtocol() === 'https://' || window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/ytplayer', null, { reconnectInterval: 500 }),
         listeners = [],
         player = {},
         hasAPIKey = true,
-        secondConnection = false;
+        secondConnection = false,
+        k = null;
 
     /*
      * @function sends data to the socket, this should only be used in this script.
@@ -196,7 +198,7 @@ $(function() {
     player.updateSong = (id) => {
         sendToSocket({
             status: {
-                currentid: id
+                currentid: '' + id
             }
         });
     };
@@ -266,6 +268,15 @@ $(function() {
         });
     };
 
+    player.isModuleEnabled = (callback_id, callback) => {
+        listeners[callback_id] = callback;
+
+        sendToSocket({
+            is_module_enabled: true,
+            query_id: callback_id
+        });
+    };
+
     /*
      * @function Updates a key and value in the database
      *
@@ -308,16 +319,23 @@ $(function() {
      */
     socket.onopen = (e) => {
         console.info('Connection established with the websocket.');
+        toastr.remove();
 
+        if (e.isReconnect) {
+            listeners['reconnect'](null);
+        }
         // Send the auth to the bot.
         sendToSocket({
-            authenticate: getAuth()
+            authenticate: getAuth(),
+            k: k
         });
 
-        // Load the YouTube iframe.
-        $('body').append($('<script/>', {
-            src: 'https://www.youtube.com/iframe_api'
-        }));
+        if (!e.isReconnect) {
+            // Load the YouTube iframe.
+            $('body').append($('<script/>', {
+                src: 'https://www.youtube.com/iframe_api'
+            }));
+        }
     };
 
     /*
@@ -329,7 +347,7 @@ $(function() {
         if (secondConnection) {
             toastr.error('PhantomBot has closed the WebSocket.', '', {timeOut: 0});
         } else {
-            toastr.error('Connection with WebSocket was lost. Refresh once reestablished.', '', {timeOut: 0});
+            toastr.error('Connection with WebSocket was lost.', '', {timeOut: 15});
         }
     };
 
@@ -354,6 +372,7 @@ $(function() {
                     toastr.error('PhantomBot rejected the connection due to a player window already being open.', '',
                                  {timeOut: 0, extendedTimeOut: 0});
                     console.error('Only one instance allowed.');
+                    socket.close();
                 }
                 return;
             }
@@ -362,19 +381,22 @@ $(function() {
             if (message.authresult !== undefined) {
                 if (message.authresult === false) {
                     console.error('Failed to auth with the socket.');
+                    socket.close();
                 }
                 return;
             }
 
             // Check to ensure that there is an API key.
             if (message.ytkeycheck !== undefined) {
+                k = message.k;
                 if (message.ytkeycheck === false) {
                     hasAPIKey = false;
                     console.error("Missing YouTube API Key.");
                     toastr.error('A YouTube API key has not been configured. Please review the instructions ' +
-                                 '<a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/youtubesetup">here' +
-                                 '</a> on the PhantomBot Community Forum.', 'Missing YouTube API Key',
+                                 '<a href="https://phantombot.dev/guides/#guide=content/integrations/youtubesetup">here' +
+                                 '</a>.', 'Missing YouTube API Key',
                                  {timeOut: 0, extendedTimeOut: 0});
+                    socket.close();
                 }
                 return;
             }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,7 +47,7 @@
         /**
          * @discordcommandpath roulette - Pull the trigger and find out if there's a bullet in the chamber
          */
-        if (command.equalsIgnoreCase('roulette')) {
+        if ($.equalsIgnoreCase(command, 'roulette')) {
             var r1 = $.randRange(1, 2),
                 r2 = $.randRange(1, 2),
                 random;
@@ -68,9 +68,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/games/roulette.js', 'roulette', 0);
 
         if (responseCountWin === 0 && responseCountLost === 0) {

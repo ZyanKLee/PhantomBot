@@ -1,6 +1,6 @@
 
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,17 +17,12 @@
  */
 package com.illusionaryone;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.net.MalformedURLException;
-import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.nio.charset.Charset;
+import com.gmt2001.HttpRequest;
+import com.gmt2001.httpclient.HttpClient;
+import com.gmt2001.httpclient.HttpClientResponse;
+import com.gmt2001.httpclient.URIUtil;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.net.ssl.HttpsURLConnection;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -39,115 +34,30 @@ import tv.phantombot.RepoVersion;
  *
  * @author illusionaryone
  */
-public class GitHubAPIv3 {
+public final class GitHubAPIv3 {
 
-    private static GitHubAPIv3 instance;
-    private static final String sAPIURL = "https://api.github.com/repos/PhantomBot/PhantomBot";
-    private static final int iHTTPTimeout = 2 * 1000;
-
-    public static synchronized GitHubAPIv3 instance() {
-        if (instance == null) {
-            instance = new GitHubAPIv3();
-        }
-        
-        return instance;
-    }
+    private static final String BASE_URL = "https://api.github.com/repos/PhantomBot/PhantomBot";
 
     private GitHubAPIv3() {
-        Thread.setDefaultUncaughtExceptionHandler(com.gmt2001.UncaughtExceptionHandler.instance());
     }
 
-    /*
-     * Reads data from a stream.
-     */
-    private static String readAll(Reader rd) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        int cp;
-        while ((cp = rd.read()) != -1) {
-            sb.append((char) cp);
-        }
-        return sb.toString();
-    }
-
-    /*
-     * Populates additional information into a JSON object to be digested
-     * as needed.
-     */
-    private static void fillJSONObject(JSONObject jsonObject, boolean success, String type,
-                                       String url, int responseCode, String exception,
-                                       String exceptionMessage, String jsonContent) throws JSONException {
-        jsonObject.put("_success", success);
-        jsonObject.put("_type", type);
-        jsonObject.put("_url", url);
-        jsonObject.put("_http", responseCode);
-        jsonObject.put("_exception", exception);
-        jsonObject.put("_exceptionMessage", exceptionMessage);
-        jsonObject.put("_content", jsonContent);
-    }
-
-    @SuppressWarnings("UseSpecificCatch")
-    private static JSONObject readJsonFromUrl(String urlAddress, boolean isArray) throws JSONException {
-        JSONObject jsonResult = new JSONObject("{}");
-        InputStream inputStream = null;
-        URL urlRaw;
-        HttpsURLConnection urlConn;
-        String jsonText = "";
+    private static JSONObject readJsonFromUrl(String endPoint, boolean isArray) throws JSONException {
+        JSONObject jsonResult = new JSONObject();
 
         try {
-            urlRaw = new URL(urlAddress);
-            urlConn = (HttpsURLConnection) urlRaw.openConnection();
-            urlConn.setDoInput(true);
-            urlConn.setRequestMethod("GET");
-            urlConn.addRequestProperty("Content-Type", "application/json");
-            urlConn.addRequestProperty("Accept", "application/vnd.github.v3+json");
-            urlConn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 " +
-                                       "(KHTML, like Gecko) Chrome/44.0.2403.52 Safari/537.36 PhantomBotJ/2015");
-            urlConn.connect();
-
-            if (urlConn.getResponseCode() == 200) {
-                inputStream = urlConn.getInputStream();
-            } else {
-                inputStream = urlConn.getErrorStream();
-            }
-
-            BufferedReader rd = new BufferedReader(new InputStreamReader(inputStream, Charset.forName("UTF-8")));
-            jsonText = readAll(rd);
+            HttpClientResponse response = HttpClient.get(URIUtil.create(BASE_URL + endPoint));
             if (isArray) {
-                jsonResult = new JSONObject("{ \"array\": " + jsonText + " }");
+                jsonResult.put("array", new JSONArray(response.responseBody()));
             } else {
-                jsonResult = new JSONObject(jsonText);
+                jsonResult = response.json();
             }
-            fillJSONObject(jsonResult, true, "GET", urlAddress, urlConn.getResponseCode(), "", "", jsonText);
+            HttpRequest.generateJSONObject(jsonResult, true, "GET", "", endPoint, response.responseCode().code(), "", "");
         } catch (JSONException ex) {
-            fillJSONObject(jsonResult, false, "GET", urlAddress, 0, "JSONException", ex.getMessage(), jsonText);
-            com.gmt2001.Console.err.println("GitHubv3API::readJsonFromUrl::Exception: " + ex.getMessage());
-        } catch (NullPointerException ex) {
-            fillJSONObject(jsonResult, false, "GET", urlAddress, 0, "NullPointerException", ex.getMessage(), "");
-            com.gmt2001.Console.err.println("GitHubv3API::readJsonFromUrl::Exception: " + ex.getMessage());
-        } catch (MalformedURLException ex) {
-            fillJSONObject(jsonResult, false, "GET", urlAddress, 0, "MalformedURLException", ex.getMessage(), "");
-            com.gmt2001.Console.err.println("GitHubv3API::readJsonFromUrl::Exception: " + ex.getMessage());
-        } catch (SocketTimeoutException ex) {
-            fillJSONObject(jsonResult, false, "GET", urlAddress, 0, "SocketTimeoutException", ex.getMessage(), "");
-            com.gmt2001.Console.err.println("GitHubv3API::readJsonFromUrl::Exception: " + ex.getMessage());
-        } catch (IOException ex) {
-            fillJSONObject(jsonResult, false, "GET", urlAddress, 0, "IOException", ex.getMessage(), "");
-            com.gmt2001.Console.err.println("GitHubv3API::readJsonFromUrl::Exception: " + ex.getMessage());
+            HttpRequest.generateJSONObject(jsonResult, false, "GET", "", endPoint, 0, ex.getClass().getSimpleName(), ex.getMessage());
             com.gmt2001.Console.err.printStackTrace(ex);
-        } catch (Exception ex) {
-            fillJSONObject(jsonResult, false, "GET", urlAddress, 0, "Exception", ex.getMessage(), "");
-            com.gmt2001.Console.err.println("GitHubv3API::readJsonFromUrl::Exception: " + ex.getMessage());
-        } finally {
-            if (inputStream != null)
-                try {
-                    inputStream.close();
-                } catch (IOException ex) {
-                    fillJSONObject(jsonResult, false, "GET", urlAddress, 0, "IOException", ex.getMessage(), "");
-                    com.gmt2001.Console.err.println("GitHubv3API::readJsonFromUrl::Exception: " + ex.getMessage());
-                }
         }
 
-        return(jsonResult);
+        return jsonResult;
     }
 
     /*
@@ -155,8 +65,61 @@ public class GitHubAPIv3 {
      *
      * @return  JSONObject  JSONObject from GitHub
      */
-    public JSONObject GetReleases() throws JSONException {
-        return readJsonFromUrl(sAPIURL + "/releases", true);
+    public static JSONObject GetReleases() throws JSONException {
+        return readJsonFromUrl("/releases", true);
+    }
+
+    /*
+     * Pulls release information from GitHub.
+     *
+     * @return  JSONObject  JSONObject from GitHub
+     */
+    public static JSONObject GetLatestRelease() throws JSONException {
+        return readJsonFromUrl("/releases/latest", false);
+    }
+
+    private static final Pattern VERSIONREGEX = Pattern.compile("[a-zA-Z_\\W]*([0-9]+\\.[0-9]+(\\.[0-9]+)*)[a-zA-Z_\\W]*");
+
+    /**
+     * Compares version strings on the dot-notation integers only
+     *
+     * @param left Original/running version
+     * @param right Remote/latest version
+     * @return {@code false} if right and left are valid version strings, and right is newer than left; else {@code true}
+     */
+    public static boolean CompareVersions(String left, String right) {
+        if (left == null || right == null) {
+            return true;
+        }
+
+        Matcher lMatcher = VERSIONREGEX.matcher(left);
+        Matcher rMatcher = VERSIONREGEX.matcher(right);
+
+        if (!lMatcher.matches() || !rMatcher.matches()) {
+            return true;
+        }
+
+        String spl1[] = lMatcher.group(1).split("\\.");
+        String spl2[] = rMatcher.group(1).split("\\.");
+        int len = Math.max(spl1.length, spl2.length);
+        int[] lVer = new int[len];
+
+        for (int i = 0; i < len; i++) {
+            lVer[i] = (i < spl1.length ? Integer.parseInt(spl1[i]) : 0);
+        }
+
+        int[] rVer = new int[len];
+        for (int i = 0; i < len; i++) {
+            rVer[i] = (i < spl2.length ? Integer.parseInt(spl2[i]) : 0);
+        }
+
+        for (int i = 0; i < len; i++) {
+            if (lVer[i] < rVer[i]) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /*
@@ -164,25 +127,30 @@ public class GitHubAPIv3 {
      *
      * @return  String  null if no new version detected else the version and URL to download the release
      */
-    public String[] CheckNewRelease() throws JSONException {
-        JSONObject jsonObject = GetReleases();
-        JSONArray jsonArray = jsonObject.getJSONArray("array");
-        if (!jsonArray.getJSONObject(0).has("tag_name")) {
-            return null;
-        }
-        String tagName = jsonArray.getJSONObject(0).getString("tag_name");
-        if (tagName.equals("v" + RepoVersion.getPhantomBotVersion().split("-")[0])) {
+    public static String[] CheckNewRelease() throws JSONException {
+        JSONObject jsonObject = GetLatestRelease();
+        if (!jsonObject.has("tag_name")) {
             return null;
         }
 
-        if (!jsonArray.getJSONObject(0).has("assets")) {
+        String tagName = jsonObject.getString("tag_name");
+        if (CompareVersions(RepoVersion.getPhantomBotVersion(), tagName)) {
+            return null;
+        }
+
+        if (!jsonObject.has("assets")) {
             return null;
         }
 
         String os = PhantomBot.getOsSuffix();
 
-        JSONArray assetsArray = jsonArray.getJSONObject(0).getJSONArray("assets");
-        Pattern p = Pattern.compile(".*PhantomBot-[0-9]+\\.[0-9]+\\.[0-9]+" + os + "\\.zip", Pattern.CASE_INSENSITIVE);
+        JSONArray assetsArray = jsonObject.getJSONArray("assets");
+
+        if (assetsArray.isEmpty()) {
+            return null;
+        }
+
+        Pattern p = Pattern.compile(".*PhantomBot-([0-9]+\\.?)+" + os + "\\.zip", Pattern.CASE_INSENSITIVE);
         int i;
         boolean found = false;
         for (i = 0; i < assetsArray.length(); i++) {
@@ -193,15 +161,18 @@ public class GitHubAPIv3 {
         }
 
         if (!found) {
-            p = Pattern.compile(".*PhantomBot-[0-9]+\\.[0-9]+\\.[0-9]+\\.zip", Pattern.CASE_INSENSITIVE);
+            p = Pattern.compile(".*PhantomBot-([0-9]+\\.?)+\\.zip", Pattern.CASE_INSENSITIVE);
             for (i = 0; i < assetsArray.length(); i++) {
                 if (assetsArray.getJSONObject(i).has("browser_download_url") && p.matcher(assetsArray.getJSONObject(i).getString("browser_download_url")).matches()) {
+                    found = true;
                     break;
                 }
             }
         }
 
-        return new String[] { tagName, assetsArray.getJSONObject(i).getString("browser_download_url") };
+        if (found) {
+            return new String[]{tagName, assetsArray.getJSONObject(i).getString("browser_download_url")};
+        }
+        return null;
     }
-
 }

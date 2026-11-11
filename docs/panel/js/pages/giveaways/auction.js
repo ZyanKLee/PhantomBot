@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,8 +18,8 @@
 // Function that querys all of the data we need.
 $(run = function () {
     socket.getDBValues('auction_module_status_toggle', {
-        tables: ['modules', 'auctionSettings'],
-        keys: ['./systems/auctionSystem.js', 'isActive']
+        tables: ['modules', 'auctionSettings', 'auctionSettings'],
+        keys: ['./systems/auctionSystem.js', 'isActive', 'extTime']
     }, true, function (e) {
         if (!helpers.handleModuleLoadUp(['auctionOptions'], e['./systems/auctionSystem.js'], 'auctionSystemModuleToggle')) {
             // Remove the chat.
@@ -28,13 +28,17 @@ $(run = function () {
         }
 
         // Update the open button to close if the raffle is active.
-        if (e['isActive'] === 'true') {
+        if (helpers.isTrue(e['isActive'])) {
             $('#open-or-close-auction').html($('<i/>', {
                 'class': 'fa fa-lock'
             })).append('&nbsp; Close').removeClass('btn-success').addClass('btn-warning');
         }
 
-        if (location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
+        if (e['extTime'] !== undefined) {
+            $('#auction-extTime').val(e['extTime']);
+        }
+
+        if (helpers.canEmbedTwitch()) {
             // Add Twitch chat.
             $('#twitch-chat-auction').html($('<iframe/>', {
                 'frameborder': '0',
@@ -43,7 +47,7 @@ $(run = function () {
                 'src': 'https://www.twitch.tv/embed/' + getChannelName() + '/chat' + (helpers.isDark ? '?darkpopout&' : '?') + 'parent=' + location.hostname
             }));
         } else {
-            $('#twitch-chat-auction').html('Due to changes by Twitch, the chat panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
+            $('#twitch-chat-auction').html(helpers.CANT_EMBED_TWITCH_TEXT);
             $('#twitch-chat-auction').addClass('box-body');
         }
 
@@ -81,17 +85,21 @@ $(function () {
             const commandLevel = $('#auction-perm').find(':selected').text(),
                     minBet = $('#auction-bet'),
                     incre = $('#auction-inc'),
-                    timer = $('#auction-timer');
+                    timer = $('#auction-timer'),
+                    extTime = $('#auction-extTime'),
+                    isPoints = $('#auction-isPoints').is(':checked');
 
             // Make sure the user entered everything right.
             switch (false) {
                 case helpers.handleInputNumber(minBet, 1):
                 case helpers.handleInputNumber(incre, 1):
                 case helpers.handleInputNumber(timer, 0):
+                case helpers.handleInputNumber(extTime, 6, 29):
                     break;
                 default:
                     socket.sendCommandSync('auction_command_permisison_update', 'permcomsilent bid ' + helpers.getGroupIdByName(commandLevel, true), function () {
-                        socket.sendCommand('auction_open_cmd', 'auction open ' + incre.val() + ' ' + minBet.val() + ' ' + timer.val(), function () {
+                        socket.sendCommand('auction_open_cmd', 'auction setExtensionTime ' + extTime.val(), undefined);
+                        socket.sendCommand('auction_open_cmd', 'auction open ' + incre.val() + ' ' + minBet.val() + ' ' + timer.val() + ' ' + (isPoints ? "" : "nopoints"), function () {
                             // Alert the user.
                             toastr.success('Successfully opened the auction!');
                             // Update the button.

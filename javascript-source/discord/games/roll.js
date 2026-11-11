@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -84,7 +84,7 @@
             args = event.getArgs(),
             action = args[0];
 
-        if (command.equalsIgnoreCase('roll')) {
+        if ($.equalsIgnoreCase(command, 'roll')) {
             if (action === undefined) {
                 var twitchName = $.discord.resolveTwitchName(event.getSenderId());
                 if (twitchName !== null) {
@@ -96,7 +96,7 @@
                 /**
                  * @discordcommandpath roll rewards [rewards] - Sets the rewards for the dice roll
                  */
-                if (action.equalsIgnoreCase('rewards')) {
+                if ($.equalsIgnoreCase(action, 'rewards')) {
                     if (args.length === 7 && !isNaN(parseInt(args[1])) && !isNaN(parseInt(args[2])) && !isNaN(parseInt(args[3])) && !isNaN(parseInt(args[4])) && !isNaN(parseInt(args[5])) && !isNaN(parseInt(args[6]))) {
                         $.discord.say(channel, $.discord.userPrefix(mention) + $.lang.get('discord.roll.rewards.success'));
                         $.inidb.set('discordRollReward', 'reward_0', args[1]);
@@ -115,9 +115,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/games/roll.js', 'roll', 0);
         $.discord.registerSubCommand('roll', 'rewards', 1);
         loadRewards();
@@ -127,7 +127,7 @@
      * @event webPanelSocketUpdate
      */
     $.bind('webPanelSocketUpdate', function(event) {
-        if (event.getScript().equalsIgnoreCase('./discord/games/roll.js')) {
+        if ($.equalsIgnoreCase(event.getScript(), './discord/games/roll.js')) {
             loadRewards();
         }
     });

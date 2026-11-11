@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,12 +26,12 @@ $(function() {
      */
     function getQueryMap() {
         let queryString = window.location.search, // Query string that starts with ?
-            queryParts = queryString.substr(1).split('&'), // Split at each &, which is a new query.
+            queryParts = queryString.slice(1).split('&'), // Split at each &, which is a new query.
             queryMap = new Map(); // Create a new map for save our keys and values.
 
         for (let i = 0; i < queryParts.length; i++) {
-            let key = queryParts[i].substr(0, queryParts[i].indexOf('=')),
-                value = queryParts[i].substr(queryParts[i].indexOf('=') + 1, queryParts[i].length);
+            let key = queryParts[i].substring(0, queryParts[i].indexOf('=')),
+                value = queryParts[i].slice(queryParts[i].indexOf('=') + 1);
 
             if (key.length > 0 && value.length > 0) {
                 queryMap.set(key.toLowerCase(), value);
@@ -61,17 +61,6 @@ $(function() {
         } catch (e) {
             logError('Failed to send message to socket: ' + e.message);
         }
-    };
-
-    const wsEvent = function(callback_id, script, argsString, args) {
-        sendToSocket({
-            socket_event: callback_id,
-            script: script,
-            args: {
-                arguments: String(argsString),
-                args: args
-            }
-        });
     };
 
     /*
@@ -127,7 +116,7 @@ $(function() {
      * @param obj The object of data
      * @param slideFrom The option where to slide it from, left, right, top, bottom.
      */
-    const createChart = function(obj, slideFrom = 'right') {
+    const createChart = function(obj, slideFrom, command) {
         const poll = $('.poll'),
             height = $(window).height(),
             width = $(window).width();
@@ -147,7 +136,7 @@ $(function() {
         }, 1e3);
 
         // Make the chart.
-        chart = new Chart(poll.get(0).getContext('2d'), getChartConfig(obj));
+        chart = new Chart(poll.get(0).getContext('2d'), getChartConfig(obj, true, command));
 
         chart.update();
     };
@@ -157,7 +146,7 @@ $(function() {
      *
      * @param slideFrom The option where to slide it from, left, right, top, bottom.
      */
-    const disposeChart = function(slideFrom = 'right') {
+    const disposeChart = function(slideFrom) {
         $('.poll').toggle('slide', {
             'direction': slideFrom
         }, 1e3, () => window.location.reload());
@@ -168,8 +157,8 @@ $(function() {
      *
      * @param obj The object of data
      */
-    const updateChart = function(obj) {
-        const config = getChartConfig(obj, false);
+    const updateChart = function(obj, command) {
+        const config = getChartConfig(obj, false, command);
 
         chart.data.datasets[0].data = config.data.datasets[0].data;
 
@@ -183,7 +172,7 @@ $(function() {
      * @param updateColor If the chart colors should be updated.
      * @return The config.
      */
-    const getChartConfig = function(obj, updateColor = true) {
+    const getChartConfig = function(obj, updateColor, command) {
         const config = {
             'type': 'pie',
             'data': {
@@ -201,7 +190,7 @@ $(function() {
                 'legend': {
                     'labels': {
                         'fontSize': 25,
-                        'fontColor': 'black',
+                        'fontColor': getOptionSetting('fontColor', 'black'),
                         'padding': 25
                     },
                     'position': 'top',
@@ -209,12 +198,12 @@ $(function() {
                 'title': {
                     'display': true,
                     'fontSize': 35,
-                    'fontColor': 'black',
-                    'text': '!vote [#]'
+                    'fontColor': getOptionSetting('fontColor', 'black'),
+                    'text': obj.title + ' - !' + command
                 },
                 'plugins': {
                     'datalabels': {
-                        'color': '#000',
+                        'color': getOptionSetting('fontColor', 'black'),
                         'font': {
                             'size': 50
                         },
@@ -240,12 +229,13 @@ $(function() {
         let idx = 1;
 
         // Add the data.
-        JSON.parse(obj.data).map(json => {
+        obj.options.map(json => {
             config.data.labels.push(json.label + ' (#' + idx++ + ')');
             config.data.datasets[0].data.push(parseInt(json.votes));
 
-            if (updateColor)
+            if (updateColor) {
                 config.data.datasets[0].backgroundColor.push(getRandomRGB());
+            }
         });
 
         return config;
@@ -293,18 +283,27 @@ $(function() {
                 if (message.hasOwnProperty('authresult')) {
                     if (message.authresult === 'true') {
                         logSuccess('Successfully authenticated with the socket.');
-                        wsEvent('pollState', './systems/pollSystem.js', null, null);
+                        sendToSocket({pollState: true});
                     } else {
                         logError('Failed to authenticate with the socket.');
                     }
                 } else {
-                    // Handle our stats.
-                    if (message.hasOwnProperty('start_poll')) { // New poll handle it.
-                        createChart(message, getOptionSetting('slideFromOpen', 'right'));
-                    } else if (message.hasOwnProperty('new_vote')) { // New vote, handle it.
-                        updateChart(message);
-                    } else {
-                        if (message.hasOwnProperty('end_poll')) { // End poll handle it.
+                    if (getOptionSetting('polls', 'true').toLowerCase() === 'true') {
+                        if (message.hasOwnProperty('start_poll')) { // New poll handle it.
+                            createChart(message, getOptionSetting('slideFromOpen', 'right'), 'vote [#]');
+                        } else if (message.hasOwnProperty('new_vote')) { // New vote, handle it.
+                            updateChart(message, 'vote [#]');
+                        } else if (message.hasOwnProperty('end_poll')) { // End poll handle it.
+                            disposeChart(getOptionSetting('slideFromClose', 'right'));
+                        }
+                    }
+                    
+                    if (getOptionSetting('bets', 'true').toLowerCase() === 'true') {
+                        if (message.hasOwnProperty('start_bet')) {
+                            createChart(message, getOptionSetting('slideFromOpen', 'right'), 'bet [amount] [option]');
+                        } else if (message.hasOwnProperty('new_bet')) {
+                            updateChart(message, 'bet [amount] [option]');
+                        } else if (message.hasOwnProperty('end_bet')) {
                             disposeChart(getOptionSetting('slideFromClose', 'right'));
                         }
                     }

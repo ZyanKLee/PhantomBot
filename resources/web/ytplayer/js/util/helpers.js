@@ -21,7 +21,7 @@ $(function() {
         }).append($('<div/>', {
             'class': 'modal-content'
         }).append($('<div/>', {
-            'class': 'modal-header',
+            'class': 'modal-header'
         }).append($('<h5/>', {
             'class': 'modal-title',
             'text': title
@@ -34,7 +34,7 @@ $(function() {
             'class': 'modal-body',
             'html': body
         })).append($('<div/>', {
-            'class': 'modal-footer',
+            'class': 'modal-footer'
         }).append($('<button/>', {
             'class': 'btn btn-primary',
             'type': 'button',
@@ -198,7 +198,7 @@ $(function() {
                 'id': 'dj-name',
                 'value': e.playlistDJname
             }))).append($('<div/>', {
-                'class': 'form-group',
+                'class': 'form-group'
             }).append($('<label/>', {
                 'text': 'Maximum Songs'
             })).append($('<input/>', {
@@ -242,7 +242,7 @@ $(function() {
     helpers.getPlayerSize = () => {
         let size = localStorage.getItem('phantombot_ytplayer_size');
 
-        return (size === null ? 'Default' : size[0].toUpperCase() + size.substr(1));
+        return (size === null ? 'Default' : size[0].toUpperCase() + size.slice(1));
     };
 
     /*
@@ -275,7 +275,21 @@ $(function() {
     helpers.urlIsIP = () => {
         var rx=/^(?!0)(?!.*\.$)((1?\d?\d|25[0-5]|2[0-4]\d)(\.|$)){4}$/;
         return rx.test(window.location.hostname);
-    }
+    };
+
+    helpers.isTrue = function(val) {
+        if (val === undefined || val === null) {
+            return false;
+        }
+
+        try {
+            if (typeof val === 'string') {
+                val = val.trim().toLowerCase();
+            }
+        } catch (e) {}
+
+        return val === true || val === 1 || val === 'true' || val === '1' || val === 'yes';
+    };
 
     // Export object.
     window.helpers = helpers;

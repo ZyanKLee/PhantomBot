@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,10 +15,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global Packages */
+
 (function() {
     var isOpened = false,
+        msgOnJoin = $.getSetIniDbBoolean('settings', 'queueSystemMsgOnJoin', false),
         info = {},
-        queue = {};
+        queue = {},
+        _queueLock = new Packages.java.util.concurrent.locks.ReentrantLock();
 
     /*
      * @function open
@@ -31,13 +35,16 @@
         if (isOpened === true) {
             $.say($.whisperPrefix(username) + $.lang.get('queuesystem.open.error.opened'));
             return;
-        } else if (size === undefined || isNaN(parseInt(size))) {
+        }
+        if (size === undefined || isNaN(parseInt(size))) {
             $.say($.whisperPrefix(username) + $.lang.get('queuesystem.open.error.usage'));
             return;
-        } else if (title === undefined) {
+        }
+        if (title === undefined) {
             $.say($.whisperPrefix(username) + $.lang.get('queuesystem.open.usage'));
             return;
-        } else if (Object.keys(queue).length !== 0) {
+        }
+        if (Object.keys(queue).length !== 0) {
             $.say($.whisperPrefix(username) + $.lang.get('queuesystem.open.error.clear'));
             return;
         }
@@ -53,6 +60,7 @@
         } else {
             $.say($.lang.get('queuesystem.open.limit', size, title));
         }
+
         isOpened = true;
         $.inidb.set('queueSettings', 'isActive', 'true');
     }
@@ -95,31 +103,42 @@
     function join(username, action, command) {
         if (queue[username] !== undefined) {
             $.say($.whisperPrefix(username) + $.lang.get('queuesystem.join.error.joined'));
-            $.returnCommandCost(username, command, $.isMod(username));
+            $.returnCommandCost(username, command, $.checkUserPermission(username, undefined, $.PERMISSION.Mod));
             return;
-        } else if (info.size !== 0 && (info.size <= Object.keys(queue).length)) {
+        }
+        if (info.size !== 0 && (info.size <= Object.keys(queue).length)) {
             $.say($.whisperPrefix(username) + $.lang.get('queuesystem.join.error.full'));
-            $.returnCommandCost(username, command, $.isMod(username));
+            $.returnCommandCost(username, command, $.checkUserPermission(username, undefined, $.PERMISSION.Mod));
             return;
-        } else if (isOpened === false) {
-            $.returnCommandCost(username, command, $.isMod(username));
+        }
+        if (isOpened === false) {
+            $.returnCommandCost(username, command, $.checkUserPermission(username, undefined, $.PERMISSION.Mod));
             return;
         }
 
-        queue[username] = {
-            tag: (action === undefined ? '' : action),
-            position: Object.keys(queue).length,
-            time: new Date(),
-            username: username
-        };
+        _queueLock.lock();
+        try {
+            queue[username] = {
+                tag: (action === undefined ? '' : action),
+                position: Object.keys(queue).length,
+                time: new Date(),
+                username: username
+            };
 
-        var temp = {
-            'tag': String((action === undefined ? '' : action)),
-            'time': String(date(new Date(), true)),
-            'position': String(Object.keys(queue).length),
-            'username': String(username)
-        };
-        $.inidb.set('queue', username, JSON.stringify(temp));
+            let position = String(Object.keys(queue).length);
+            var temp = {
+                'tag': String((action === undefined ? '' : action)),
+                'time': String(date(new Date(), true)),
+                'position': position,
+                'username': String(username)
+            };
+            $.inidb.set('queue', username, JSON.stringify(temp));
+            if (msgOnJoin) {
+                $.say($.whisperPrefix(username) + $.lang.get('queuesystem.join.success', position));
+            }
+        } finally {
+            _queueLock.unlock();
+        }
     }
 
     /*
@@ -132,7 +151,8 @@
         if (action === undefined) {
             $.say($.whisperPrefix(username) + $.lang.get('queuesystem.remove.usage'));
             return;
-        } else if (queue[action.toLowerCase()] === undefined) {
+        }
+        if (queue[action.toLowerCase()] === undefined) {
             $.say($.whisperPrefix(username) + $.lang.get('queuesystem.remove.404'));
             return;
         }
@@ -161,17 +181,17 @@
      * @return {String}
      */
     function date(time, simple) {
-        var date = new Date(time),
-            format = new java.text.SimpleDateFormat('HH:mm:ss z'),
-            seconds = Math.floor((new Date() - time) / 1000),
-            string = $.getTimeString(seconds);
+        var zone = $.getIniDbString('settings', 'timezone', 'GMT');
+        var ldate = Packages.java.time.ZonedDateTime.ofInstant(Packages.java.time.Instant.ofEpochMilli(time), Packages.java.time.ZoneId.of(zone));
+        var datevar = ldate.format(Packages.java.time.format.DateTimeFormatter.ofPattern('HH:mm:ss z'));
+        var string = $.getTimeString(Packages.java.time.Duration.between(ldate, Packages.java.time.ZonedDateTime.now()).toSeconds());
 
-        format.setTimeZone(java.util.TimeZone.getTimeZone(($.inidb.exists('settings', 'timezone') ? $.inidb.get('settings', 'timezone') : 'GMT')));
         if (simple === undefined) {
-            return format.format(date) + ' ' + $.lang.get('queuesystem.time.info', string);
-        } else {
-            return format.format(date);
+            return datevar + ' ' + $.lang.get('queuesystem.time.info', string);
         }
+
+        return datevar;
+
     }
 
     /*
@@ -256,27 +276,32 @@
      * @function resetPosition
      */
     function resetPosition(splice) {
-        var keys = Object.keys(queue),
-            t = 0,
-            i;
+        _queueLock.lock();
+        try {
+            var keys = Object.keys(queue),
+                t = 0,
+                i;
 
-        for (i in keys) {
-            if (splice !== -1 && t <= splice) {
-                $.inidb.del('queue', keys[i]);
-                delete queue[keys[i]];
+            for (i in keys) {
+                if (splice !== -1 && t <= splice) {
+                    $.inidb.del('queue', keys[i]);
+                    delete queue[keys[i]];
+                }
+                t++;
             }
-            t++;
-        }
 
-        keys = Object.keys(queue);
-        t = 1;
+            keys = Object.keys(queue);
+            t = 1;
 
-        for (i in keys) {
-            queue[keys[i]].position = t;
-            var temp = JSON.parse($.inidb.get('queue', keys[i]));
-            temp.position = t;
-            $.inidb.set('queue', keys[i], JSON.stringify(temp));
-            t++;
+            for (i in keys) {
+                queue[keys[i]].position = t;
+                var temp = JSON.parse($.getIniDbString('queue', keys[i]));
+                temp.position = t;
+                $.inidb.set('queue', keys[i], JSON.stringify(temp));
+                t++;
+            }
+        } finally {
+            _queueLock.unlock();
         }
 
     }
@@ -298,13 +323,18 @@
             keys = $.arrayShuffle(keys);
         }
 
-        for (i in keys) {
-            if (total >= t && temp.length < 400) {
-                temp.push('#' + t + ': ' + queue[keys[i]].username + (queue[keys[i]].tag !== '' ? ' ' + $.lang.get('queuesystem.gamertag', queue[keys[i]].tag) : ''));
-                t++;
-            } else {
-                break;
+        _queueLock.lock();
+        try {
+            for (i in keys) {
+                if (total >= t && temp.length < 400) {
+                    temp.push('#' + t + ': ' + queue[keys[i]].username + (queue[keys[i]].tag !== '' ? ' ' + $.lang.get('queuesystem.gamertag', queue[keys[i]].tag) : ''));
+                    t++;
+                } else {
+                    break;
+                }
             }
+        } finally {
+            _queueLock.unlock();
         }
 
         if (temp.length !== 0) {
@@ -326,7 +356,7 @@
             action = args[0],
             subAction = args[1];
 
-        if (command.equalsIgnoreCase('queue')) {
+        if ($.equalsIgnoreCase(command, 'queue')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('queuesystem.usage'));
                 return;
@@ -335,96 +365,117 @@
             /*
              * @commandpath queue open [max size] [title] - Opens a new queue. Max size is optional.
              */
-            if (action.equalsIgnoreCase('open')) {
+            if ($.equalsIgnoreCase(action, 'open')) {
                 open(sender, (isNaN(parseInt(subAction)) ? 0 : subAction), (isNaN(parseInt(subAction)) ? args.slice(1).join(' ') : args.slice(2).join(' ')));
+                return;
             }
 
             /*
              * @commandpath queue close - Closes the current queue that is opened.
              */
-            else if (action.equalsIgnoreCase('close')) {
+            if ($.equalsIgnoreCase(action, 'close')) {
                 close(sender);
+                return;
             }
 
             /*
              * @commandpath queue clear - Closes and resets the current queue.
              */
-            else if (action.equalsIgnoreCase('clear')) {
+            if ($.equalsIgnoreCase(action, 'clear')) {
                 clear(sender);
+                return;
+            }
+
+            /*
+             * @commandpath queue togglemsg - Toggles if the bot posts a success resonse to !joinqueue.
+             */
+            if ($.equalsIgnoreCase(action, 'togglemsg')) {
+                msgOnJoin = !msgOnJoin;
+                $.setIniDbBoolean('settings', 'queueSystemMsgOnJoin', msgOnJoin);
+                $.say($.whisperPrefix(sender) + $.lang.get('queuesystem.join.toggle', msgOnJoin ? $.lang.get('common.enabled') : $.lang.get('common.disabled')));
+                return;
             }
 
             /*
              * @commandpath queue remove [username] - Removes that username from the queue.
              */
-            else if (action.equalsIgnoreCase('remove')) {
+            if ($.equalsIgnoreCase(action, 'remove')) {
                 remove(sender, subAction);
+                return;
             }
 
             /*
              * @commandpath queue list - Gives you the current queue list. Note that if the queue list is very long it will only show the first 5 users in the queue.
              */
-            else if (action.equalsIgnoreCase('list')) {
+            if ($.equalsIgnoreCase(action, 'list')) {
                 list(sender);
+                return;
             }
 
             /*
              * @commandpath queue next [amount] - Shows the players that are to be picked next. Note if the amount is not specified it will only show one.
              */
-            else if (action.equalsIgnoreCase('next')) {
+            if ($.equalsIgnoreCase(action, 'next')) {
                 next(sender, subAction);
+                return;
             }
 
             /*
              * @commandpath queue pick [amount] - Picks the players next in line from the queue. Note if the amount is not specified it will only pick one.
              */
-            else if (action.equalsIgnoreCase('pick')) {
+            if ($.equalsIgnoreCase(action, 'pick')) {
                 pick(sender, subAction, false);
+                return;
             }
 
             /*
              * @commandpath queue random [amount] - Picks random players from the queue. Note if the amount is not specified it will only pick one.
              */
-            else if (action.equalsIgnoreCase('random')) {
+            if ($.equalsIgnoreCase(action, 'random')) {
                 pick(sender, subAction, true);
+                return;
             }
 
             /*
              * @commandpath queue position [username] - Tells what position that user is in the queue and at what time he joined.
              */
-            else if (action.equalsIgnoreCase('position')) {
+            if ($.equalsIgnoreCase(action, 'position')) {
                 position(sender, subAction);
+                return;
             }
 
             /*
              * @commandpath queue info - Gives you the current information about the queue that is opened
              */
-            else if (action.equalsIgnoreCase('info')) {
+            if ($.equalsIgnoreCase(action, 'info')) {
                 stats(sender);
+                return;
             }
         }
 
         /*
          * @commandpath joinqueue [gamertag] - Adds you to the current queue. Note that the gamertag part is optional.
          */
-        if (command.equalsIgnoreCase('joinqueue')) {
+        if ($.equalsIgnoreCase(command, 'joinqueue')) {
             join(sender, args.join(' '), command);
         }
     });
 
     $.bind('initReady', function() {
-        $.registerChatCommand('./systems/queueSystem.js', 'joinqueue', 7);
-        $.registerChatCommand('./systems/queueSystem.js', 'queue', 7);
+        $.registerChatCommand('./systems/queueSystem.js', 'joinqueue', $.PERMISSION.Viewer);
+        $.registerChatCommand('./systems/queueSystem.js', 'queue', $.PERMISSION.Viewer);
 
-        $.registerChatSubcommand('queue', 'open', 1);
-        $.registerChatSubcommand('queue', 'close', 1);
-        $.registerChatSubcommand('queue', 'clear', 1);
-        $.registerChatSubcommand('queue', 'remove', 1);
-        $.registerChatSubcommand('queue', 'pick', 1);
-        $.registerChatSubcommand('queue', 'random', 1);
-        $.registerChatSubcommand('queue', 'list', 7);
-        $.registerChatSubcommand('queue', 'next', 7);
-        $.registerChatSubcommand('queue', 'info', 7);
-        $.registerChatSubcommand('queue', 'position', 7);
+        $.registerChatSubcommand('queue', 'open', $.PERMISSION.Admin);
+        $.registerChatSubcommand('queue', 'close', $.PERMISSION.Admin);
+        $.registerChatSubcommand('queue', 'clear', $.PERMISSION.Admin);
+        $.registerChatSubcommand('queue', 'togglemsg', $.PERMISSION.Admin);
+        $.registerChatSubcommand('queue', 'remove', $.PERMISSION.Admin);
+        $.registerChatSubcommand('queue', 'pick', $.PERMISSION.Admin);
+        $.registerChatSubcommand('queue', 'random', $.PERMISSION.Admin);
+        $.registerChatSubcommand('queue', 'list', $.PERMISSION.Viewer);
+        $.registerChatSubcommand('queue', 'next', $.PERMISSION.Viewer);
+        $.registerChatSubcommand('queue', 'info', $.PERMISSION.Viewer);
+        $.registerChatSubcommand('queue', 'position', $.PERMISSION.Viewer);
 
         $.inidb.set('queueSettings', 'isActive', 'false');
     });
@@ -433,24 +484,24 @@
      * @event webPanelSocketUpdate
      */
     $.bind('webPanelSocketUpdate', function(event) {
-        if (event.getScript().equalsIgnoreCase('./systems/queueSystem.js')) {
+        if ($.equalsIgnoreCase(event.getScript(), './systems/queueSystem.js')) {
             var action = event.getArgs()[0];
 
-            if (action.equalsIgnoreCase('open')) {
+            if ($.equalsIgnoreCase(action, 'open')) {
                 open($.channelName, event.getArgs()[1], event.getArgs().slice(2).join(' '));
-            } else if (action.equalsIgnoreCase('close')) {
+            } else if ($.equalsIgnoreCase(action, 'close')) {
                 close($.channelName);
-            } else if (action.equalsIgnoreCase('pick')) {
+            } else if ($.equalsIgnoreCase(action, 'pick')) {
                 pick($.channelName, event.getArgs()[1], false);
-            } else if (action.equalsIgnoreCase('random')) {
+            } else if ($.equalsIgnoreCase(action, 'random')) {
                 pick($.channelName, event.getArgs()[1], true);
-            } else if (action.equalsIgnoreCase('remove')) {
+            } else if ($.equalsIgnoreCase(action, 'remove')) {
                 if (event.getArgs()[1] !== undefined && queue[event.getArgs()[1]] !== undefined) {
                     delete queue[event.getArgs()[1].toLowerCase()];
                     $.inidb.del('queue', event.getArgs()[1].toLowerCase());
                     resetPosition(-1);
                 }
-            } else if (action.equalsIgnoreCase('clear')) {
+            } else if ($.equalsIgnoreCase(action, 'clear')) {
                 queue = {};
                 info = {};
                 isOpened = false;

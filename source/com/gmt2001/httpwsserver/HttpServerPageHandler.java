@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,31 +16,48 @@
  */
 package com.gmt2001.httpwsserver;
 
+import com.gmt2001.PathValidator;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.DefaultFileRegion;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.DateFormatter;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.DefaultHttpResponse;
+import io.netty.handler.codec.http.EmptyHttpHeaders;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpChunkedInput;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpResponse;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpStatusClass;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.handler.codec.http.QueryStringDecoder;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.stream.ChunkedFile;
 import io.netty.util.CharsetUtil;
+import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.net.URLDecoder;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
+import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +75,7 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
      * A map of registered {@link HttpRequestHandler} for handling HTTP Requests
      */
     static Map<String, HttpRequestHandler> httpRequestHandlers = new ConcurrentHashMap<>();
+    static final int HTTP_CACHE_SECONDS = 3600;
 
     /**
      * Default Constructor
@@ -78,7 +96,17 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
         if (!req.decoderResult().isSuccess()) {
-            sendHttpResponse(ctx, req, prepareHttpResponse(HttpResponseStatus.BAD_REQUEST, null, null));
+            com.gmt2001.Console.debug.println("400 DECODER");
+            Throwable cause = req.decoderResult().cause();
+            if (cause.getMessage().contains("Content-Length value is not a number")) {
+                com.gmt2001.Console.warn.println("Unable to decode oversized POST/PUT payload");
+                com.gmt2001.Console.warn.println(cause.getMessage() + " is greater than " + Long.MAX_VALUE);
+            } else if (cause.getMessage().contains("Illegal character in request line")) {
+                com.gmt2001.Console.warn.println(cause.getMessage());
+            } else {
+                com.gmt2001.Console.err.printStackTrace(cause);
+            }
+            sendHttpResponse(ctx, req, prepareHttpResponse(HttpResponseStatus.BAD_REQUEST));
             return;
         }
 
@@ -86,12 +114,18 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
         HttpRequestHandler h = determineHttpRequestHandler(qsd.path());
 
         if (h != null) {
-            if (h.getAuthHandler().checkAuthorization(ctx, req)) {
-                h.handleRequest(ctx, req);
+            try {
+                if (h.getAuthHandler().checkAuthorization(ctx, req)) {
+                    h.handleRequest(ctx, req);
+                }
+            } catch (Exception ex) {
+                sendHttpResponse(ctx, req, prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
+                com.gmt2001.Console.err.println("500 " + req.method().asciiName() + ": " + qsd.path() + " >> " + ex.toString());
+                com.gmt2001.Console.err.printStackTrace(ex);
             }
         } else {
             com.gmt2001.Console.debug.println("404 " + req.method().asciiName() + ": " + qsd.path());
-            sendHttpResponse(ctx, req, prepareHttpResponse(HttpResponseStatus.NOT_FOUND, null, null));
+            sendHttpResponse(ctx, req, prepareHttpResponse(HttpResponseStatus.NOT_FOUND));
         }
     }
 
@@ -103,7 +137,10 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
      */
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        com.gmt2001.Console.debug.printOrLogStackTrace(cause);
+        if (!cause.getMessage().contains("certificate_unknown") && !cause.getMessage().contains("bad_certificate")
+                && !cause.getMessage().contains("connection was aborted")) {
+            com.gmt2001.Console.debug.printOrLogStackTrace(cause);
+        }
         ctx.close();
     }
 
@@ -209,6 +246,54 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
     }
 
     /**
+     * Creates and prepares a {@link FullHttpResponse} for transmission of a status code only
+     *
+     * If the value of {@code status} is in the {@code CLIENT ERROR 4xx}, {@code SERVER ERROR 5xx}, or an unknown class, then the standard name of the
+     * status code is appended to the beginning of the HTML response
+     *
+     * @param status The {@link HttpResponseStatus} to return
+     * @return A {@link FullHttpRequest} that is ready to transmit
+     */
+    public static FullHttpResponse prepareHttpResponse(HttpResponseStatus status) {
+        return prepareHttpResponse(status, (byte[]) null, null);
+    }
+
+    /**
+     * Creates and prepares a {@link FullHttpResponse} for transmission as text/plain
+     *
+     * This method automatically sets the {@code Content-Type} and {@code Content-Length} headers
+     *
+     * If the value of {@code status} is in the {@code CLIENT ERROR 4xx}, {@code SERVER ERROR 5xx}, or an unknown class, then the standard name of the
+     * status code is appended to the beginning of the HTML response, along with 2 line breaks and the MIME type is set to {@code text/html}, unless
+     * {@code fileNameOrType} ends with {@code json} or {@code xml}
+     *
+     * @param status The {@link HttpResponseStatus} to return
+     * @param content The content to send
+     * @return A {@link FullHttpRequest} that is ready to transmit
+     */
+    public static FullHttpResponse prepareHttpResponse(HttpResponseStatus status, String content) {
+        return prepareHttpResponse(status, content.getBytes(CharsetUtil.UTF_8), null);
+    }
+
+    /**
+     * Creates and prepares a {@link FullHttpResponse} for transmission
+     *
+     * This method automatically sets the {@code Content-Type} and {@code Content-Length} headers
+     *
+     * If the value of {@code status} is in the {@code CLIENT ERROR 4xx}, {@code SERVER ERROR 5xx}, or an unknown class, then the standard name of the
+     * status code is appended to the beginning of the HTML response, along with 2 line breaks and the MIME type is set to {@code text/html}, unless
+     * {@code fileNameOrType} ends with {@code json} or {@code xml}
+     *
+     * @param status The {@link HttpResponseStatus} to return
+     * @param content The content to send
+     * @param fileNameOrType The filename or type extension for MIME type detection
+     * @return A {@link FullHttpRequest} that is ready to transmit
+     */
+    public static FullHttpResponse prepareHttpResponse(HttpResponseStatus status, String content, String fileNameOrType) {
+        return prepareHttpResponse(status, content.getBytes(CharsetUtil.UTF_8), fileNameOrType);
+    }
+
+    /**
      * Creates and prepares a {@link FullHttpResponse} for transmission
      *
      * This method automatically sets the {@code Content-Type} and {@code Content-Length} headers
@@ -236,17 +321,26 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
         FullHttpResponse res = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, Unpooled.buffer());
 
         if (isError && !fileNameOrType.endsWith("json") && !fileNameOrType.endsWith("xml")) {
-            ByteBuf buf = Unpooled.copiedBuffer(res.status().toString() + "<br /><br />", CharsetUtil.UTF_8);
-            ByteBuf bcontent = Unpooled.copiedBuffer(content);
-            res.content().writeBytes(buf).writeBytes(bcontent);
-            buf.release();
-            bcontent.release();
+            ByteBuf buf = Unpooled.copiedBuffer(res.status().toString() + (content.length > 0 ? "<br /><br />" : ""), CharsetUtil.UTF_8);
+            try {
+                ByteBuf bcontent = Unpooled.copiedBuffer(content);
+                try {
+                    res.content().writeBytes(buf).writeBytes(bcontent);
+                } finally {
+                    HTTPWSServer.releaseObj(bcontent);
+                }
+            } finally {
+                HTTPWSServer.releaseObj(buf);
+            }
             res.headers().set(HttpHeaderNames.CONTENT_TYPE, detectContentType("html"));
             HttpUtil.setContentLength(res, res.content().readableBytes());
         } else {
             ByteBuf bcontent = Unpooled.copiedBuffer(content);
-            res.content().writeBytes(bcontent);
-            bcontent.release();
+            try {
+                res.content().writeBytes(bcontent);
+            } finally {
+                HTTPWSServer.releaseObj(bcontent);
+            }
             res.headers().set(HttpHeaderNames.CONTENT_TYPE, detectContentType(fileNameOrType));
             HttpUtil.setContentLength(res, res.content().readableBytes());
         }
@@ -265,16 +359,421 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
      * @param res The {@link FullHttpResponse} to transmit
      */
     public static void sendHttpResponse(ChannelHandlerContext ctx, FullHttpRequest req, FullHttpResponse res) {
-        if (!HttpUtil.isKeepAlive(req) || res.status().code() != 200) {
+        sendHttpResponse(ctx, req, res, false);
+    }
+
+    /**
+     * Transmits a {@link FullHttpResponse} back to the client
+     *
+     * @param ctx The {@link ChannelHandlerContext} of the session
+     * @param req The {@link FullHttpRequest} containing the request
+     * @param res The {@link FullHttpResponse} to transmit
+     * @param forceclose If true, connection is closed regardless of status code; otherwise, only errors or unknown status codes will explicitly close
+     * the connection
+     */
+    @SuppressWarnings("unchecked")
+    public static void sendHttpResponse(ChannelHandlerContext ctx, FullHttpRequest req, FullHttpResponse res, boolean forceclose) {
+        boolean isError = res.status().codeClass() == HttpStatusClass.CLIENT_ERROR || res.status().codeClass() == HttpStatusClass.SERVER_ERROR || res.status().codeClass() == HttpStatusClass.UNKNOWN;
+        if (!HttpUtil.isKeepAlive(req) || isError || forceclose) {
             res.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);
-            ctx.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
+            ctx.writeAndFlush(res).addListeners(ChannelFutureListener.CLOSE);
         } else {
             if (req.protocolVersion().equals(HttpVersion.HTTP_1_0)) {
                 res.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
             }
 
-            ctx.writeAndFlush(res);
+             ctx.writeAndFlush(res);
         }
+    }
+
+    /**
+     * Sends a static file, supporting range requests, conditional requests, zero‑copy transfers, and optional compression.
+     * 
+     * @param ctx The {@link ChannelHandlerContext} of the session
+     * @param req The {@link FullHttpRequest} containing the request
+     * @param path The {@link Path} of the file to be served
+     * @throws IOException if the file cannot be opened or read
+     * @implNote
+     * <ul>
+     *   <li>Zero‑copy transfer uses {@link DefaultFileRegion} and requires no SSL handler in the pipeline.</li>
+     *   <li>Chunked transfer uses {@link HttpChunkedInput} and {@link ChunkedFile}.</li>
+     *   <li>Compression is only applied to text‑like content when the client supports it and the request is not ranged.</li>
+     * </ul>
+     */
+    public static void sendFile(ChannelHandlerContext ctx, FullHttpRequest req, Path path) throws IOException {
+        sendFile(ctx, req, path, Collections.emptyMap());
+    }
+
+    /**
+     * Sends a static file, supporting range requests, conditional requests, zero‑copy transfers, and optional compression.
+     * 
+     * @param ctx The {@link ChannelHandlerContext} of the session
+     * @param req The {@link FullHttpRequest} containing the request
+     * @param path The {@link Path} of the file to be served
+     * @param headers Extra headers to include in the response
+     * @throws IOException if the file cannot be opened or read
+     * @implNote
+     * <ul>
+     *   <li>Zero‑copy transfer uses {@link DefaultFileRegion} and requires no SSL handler in the pipeline.</li>
+     *   <li>Chunked transfer uses {@link HttpChunkedInput} and {@link ChunkedFile}.</li>
+     *   <li>Compression is only applied to text‑like content when the client supports it and the request is not ranged.</li>
+     * </ul>
+     */
+    public static void sendFile(ChannelHandlerContext ctx, FullHttpRequest req, Path path, Map<CharSequence, Object> headers) throws IOException {
+        File file = path.toFile();
+        long fileLength = file.length();
+        boolean keepAlive = HttpUtil.isKeepAlive(req);
+        long rangeStart = 0;
+        long rangeEnd = fileLength - 1;
+        boolean isRange = false;
+        
+        // Range requests
+        try {
+            long[] rangeBoundaries = parseRangeRequest(ctx, req, fileLength);
+            if (rangeBoundaries != null) {
+                rangeStart = rangeBoundaries[0];
+                rangeEnd = rangeBoundaries[1];
+                isRange = true;
+            }
+        } catch (Exception e) {
+            //Invalid range request client has been informed channel closed
+            return;
+        }
+
+        HttpResponseStatus status = isRange ? HttpResponseStatus.PARTIAL_CONTENT
+                                        : HttpResponseStatus.OK;
+        HttpResponse response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, status);
+
+        //Content header
+        String contentType = detectContentType(path.getFileName().toString());
+        response.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType);
+        response.headers().set(HttpHeaderNames.ACCEPT_RANGES, "bytes");
+        response.headers().set(HttpHeaderNames.VARY, "Accept-Encoding");
+        response.headers().set(HttpHeaderNames.CONNECTION, keepAlive ? HttpHeaderValues.KEEP_ALIVE : HttpHeaderValues.CLOSE);
+        for (Map.Entry<CharSequence, Object> entry : headers.entrySet()) {
+            response.headers().set(entry.getKey(), entry.getValue());
+        }
+
+        //Cache matches send HTTP 304
+        if (checkIfClientCacheMatches(req, response, file)) {  
+            ctx.write(response);
+            ChannelFuture f = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+            if (!keepAlive) f.addListener(ChannelFutureListener.CLOSE);
+            return;
+        }
+
+        
+        // Compute content length and Content-Range if needed
+        long contentLen = isRange ? (rangeEnd - rangeStart + 1) : fileLength;
+        HttpUtil.setContentLength(response, contentLen);
+        if (isRange) {
+            response.headers().set(HttpHeaderNames.CONTENT_RANGE,
+                    "bytes " + rangeStart + "-" + rangeEnd + "/" + fileLength);
+        }
+
+        boolean isTextLike = contentType.startsWith("text/") 
+                                || contentType.contains("application/json")
+                                || contentType.startsWith("application/javascript")
+                                || contentType.equals("image/svg+xml")
+                                || contentType.equals("application/x-www-form-urlencoded");
+
+        // For non-text (e.g., video/audio/images) and range request, explicitly disable compression
+        if (!isTextLike || isRange) {
+            response.headers().set(HttpHeaderNames.CONTENT_ENCODING, HttpHeaderValues.IDENTITY);
+        }
+
+        // Response to HEAD without content
+        if (req.method() == HttpMethod.HEAD) {
+            sendResponseForHEAD(ctx, req, response);
+            return;
+        }
+
+        // Decide if what transfer type we should be using
+        String acceptEnc = req.headers().get(HttpHeaderNames.ACCEPT_ENCODING, "");
+        // Brotli and ZSTD need additional libraries 
+        boolean clientAcceptsCompression = acceptEnc.contains("gzip") || acceptEnc.contains("deflate")  ;
+        boolean hasSSL = ctx.channel().pipeline().get(SslHandler.class) != null;
+        boolean preferCompression = clientAcceptsCompression && isTextLike && !isRange;
+        boolean useZeroCopy = !hasSSL && !preferCompression;
+        
+        RandomAccessFile raf = new RandomAccessFile(file, "r");
+        ChannelFuture lastContentFuture;
+        if (useZeroCopy) {
+            ctx.write(response);
+            ctx.write(new DefaultFileRegion(raf.getChannel(), rangeStart, contentLen),
+                                                        ctx.newProgressivePromise());
+            lastContentFuture = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+            lastContentFuture.addListener(f -> {
+                            raf.close();
+                    });
+        } else {
+            HttpUtil.setTransferEncodingChunked(response, true);
+            ctx.write(response);
+            lastContentFuture = ctx.writeAndFlush(
+                new HttpChunkedInput(new ChunkedFile(raf, rangeStart, contentLen, 8192)),
+                                        ctx.newProgressivePromise()
+            );
+        }
+
+        if (!keepAlive) lastContentFuture.addListener(ChannelFutureListener.CLOSE);
+    }
+
+    /**
+     * Sends in-memory content using the same conditional caching headers as {@link #sendFile},
+     * with a caller-supplied strong {@code ETag} instead of file size / last-modified, and
+     * {@code no-cache} so the client revalidates on every request.
+     *
+     * @param ctx The {@link ChannelHandlerContext} of the session
+     * @param req The {@link FullHttpRequest} containing the request
+     * @param content Response body bytes
+     * @param fileNameOrType Filename or extension for MIME type detection
+     * @param eTag Strong ETag value (quoted), used for {@code ETag} / {@code If-None-Match}
+     * @return {@code true} when {@link HttpResponseStatus#NOT_MODIFIED} was sent
+     */
+    public static boolean sendCachedBytes(ChannelHandlerContext ctx, FullHttpRequest req, byte[] content, String fileNameOrType, String eTag) {
+        boolean keepAlive = HttpUtil.isKeepAlive(req);
+        HttpResponse response = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
+        String contentType = detectContentType(fileNameOrType);
+        response.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType);
+        response.headers().set(HttpHeaderNames.CONNECTION, keepAlive ? HttpHeaderValues.KEEP_ALIVE : HttpHeaderValues.CLOSE);
+
+        boolean notModified = checkIfClientCacheMatches(req, response, eTag, 0L);
+        // In-memory content can change without a file the client can see changing, so always revalidate
+        response.headers().set(HttpHeaderNames.CACHE_CONTROL, "private, no-cache, no-transform");
+
+        if (notModified) {
+            ctx.write(response);
+            ChannelFuture f = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+            if (!keepAlive) {
+                f.addListener(ChannelFutureListener.CLOSE);
+            }
+            return true;
+        }
+
+        if (req.method() == HttpMethod.HEAD) {
+            HttpUtil.setContentLength(response, content.length);
+            sendResponseForHEAD(ctx, req, response);
+            return false;
+        }
+
+        FullHttpResponse res = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, Unpooled.wrappedBuffer(content));
+        copyCacheHeaders(response, res);
+        res.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType);
+        res.headers().set(HttpHeaderNames.CONNECTION, keepAlive ? HttpHeaderValues.KEEP_ALIVE : HttpHeaderValues.CLOSE);
+        HttpUtil.setContentLength(res, content.length);
+        sendHttpResponse(ctx, req, res);
+        return false;
+    }
+
+    /**
+     * Copies cache-related headers set by {@link #checkIfClientCacheMatches} onto a full response.
+     */
+    private static void copyCacheHeaders(HttpResponse from, HttpResponse to) {
+        to.headers().set(HttpHeaderNames.DATE, from.headers().get(HttpHeaderNames.DATE));
+        to.headers().set(HttpHeaderNames.EXPIRES, from.headers().get(HttpHeaderNames.EXPIRES));
+        to.headers().set(HttpHeaderNames.ETAG, from.headers().get(HttpHeaderNames.ETAG));
+        to.headers().set(HttpHeaderNames.CACHE_CONTROL, from.headers().get(HttpHeaderNames.CACHE_CONTROL));
+        if (from.headers().contains(HttpHeaderNames.LAST_MODIFIED)) {
+            to.headers().set(HttpHeaderNames.LAST_MODIFIED, from.headers().get(HttpHeaderNames.LAST_MODIFIED));
+        }
+    }
+
+    /**
+     * Parses {@link HttpHeaderNames.RANGE} from the given request and determines the
+     * byte range to serve for the requested file based on the given file length
+     * 
+     * <p>If the range is valid but out of bounds the method sends a
+     * {@link HttpResponseStatus.REQUESTED_RANGE_NOT_SATISFIABLE} response and throws an exception to inform the callee.
+     *
+     * <p>If the header is missing or does not begin with {@code bytes=}, the method
+     * returns {@code null}, indicating that the full file should be served.
+
+     * @param ctx The {@link ChannelHandlerContext} of the session
+     * @param req The {@link FullHttpRequest} containing the request
+     * @param fileLength fileLength the total length of the file being requested
+     * @return {@null} if the request was not a range request, 
+     *          otherwise a {@code long[]} where index 0 is the startByte and index 1 the endByte for the range
+     * @throws Exception if range request was {@link HttpResponseStatus.REQUESTED_RANGE_NOT_SATISFIABLE} to inform callee
+     */
+    private static long[] parseRangeRequest(ChannelHandlerContext ctx, FullHttpRequest req, long fileLength) throws Exception{
+        String rangeHeader = req.headers().get(HttpHeaderNames.RANGE);
+        long rangeStart = 0;
+        long rangeEnd = fileLength - 1;
+        
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            String spec = rangeHeader.substring("bytes=".length()).trim();
+            int dash = spec.indexOf('-');
+            if (dash >= 0) {
+                String startPart = spec.substring(0, dash).trim();
+                String endPart = spec.substring(dash + 1).trim();
+
+                try {
+                    if (!startPart.isEmpty()) {
+                        rangeStart = Long.parseLong(startPart);
+                    }
+                    if (!endPart.isEmpty()) {
+                        rangeEnd = Long.parseLong(endPart);
+                    }
+                    if (startPart.isEmpty() && !endPart.isEmpty()) {
+                        // suffix range: bytes=-500  -> last 500 bytes
+                        long suffix = Long.parseLong(endPart);
+                        if (suffix > fileLength) suffix = fileLength;
+                        rangeStart = fileLength - suffix;
+                        rangeEnd = fileLength - 1;
+                    }
+                    if (rangeStart < 0 || rangeEnd < rangeStart || rangeEnd >= fileLength) {
+                        // Invalid range -> 416
+                        DefaultFullHttpResponse res = new DefaultFullHttpResponse(
+                                HttpVersion.HTTP_1_1, HttpResponseStatus.REQUESTED_RANGE_NOT_SATISFIABLE);
+                        res.headers().set(HttpHeaderNames.CONTENT_RANGE, "bytes */" + fileLength);
+                        sendHttpResponse(ctx, req, res);
+                        throw new Exception("Invalid range request");
+                    }
+                } catch (NumberFormatException ignore) {
+                    // Ignore malformed range -> fall back to full response
+                }
+            }
+        } else {
+            return null;
+        }
+
+        long[] rangeBoundaries = new long[2];
+        rangeBoundaries[0] = rangeStart;
+        rangeBoundaries[1] = rangeEnd;
+        return rangeBoundaries;
+    }
+
+    /**
+     * Checks whether the client's cached version of the requested file is still valid.
+     * 
+     * <p>This method generated and sets HTTP caching headers on the response,
+     * including:
+     * <ul>
+     *   <li>{@link HttpHeaderNames.DATE}</li>
+     *   <li>{@link HttpHeaderNames.EXPIRES}</li>
+     *   <li>{@link HttpHeaderNames.ETAG}</li>
+     *   <li>{@link HttpHeaderNames.LAST_MODIFIED}</li>
+     *   <li>{@link HttpHeaderNames.CACHE_CONTROL}</li>
+     * </ul>
+     *
+     * <p>The ETag is is to be considered strong and allows for byte ranged caching 
+     * 
+     * <p>If the resource is determined to be unmodified, the method updates the response to:
+     * <ul>
+     *   <li>set the {@link HttpResponseStatus} to {@link HttpResponseStatus.NOT_MODIFIED}</li>
+     *   <li>set the {@link HttpHeaderNames.CONTENT_LENGTH} to {@code 0}</li>
+     * </ul>
+     * @param req The {@link FullHttpRequest} containing the request
+     * @param res The {@link HttpResponse} currently intended to be sent to the client after later
+     * @param file The requested file
+     * @return {@true} if the client has an up-to-date cache, {@false} otherwise
+     */
+    private static boolean checkIfClientCacheMatches(FullHttpRequest req, HttpResponse response, File file) {
+        long lastModified = file.lastModified();
+        String eTag = "\"" + file.length() + "-" + lastModified + "\"";
+        return checkIfClientCacheMatches(req, response, eTag, lastModified);
+    }
+
+    /**
+     * @param eTag strong ETag for the representation (quoted)
+     * @param lastModified {@code Last-Modified} source; {@code 0} skips {@code If-Modified-Since}
+     */
+    private static boolean checkIfClientCacheMatches(FullHttpRequest req, HttpResponse response, String eTag, long lastModified) {
+        String ifNoneMatch = req.headers().get(HttpHeaderNames.IF_NONE_MATCH);
+        String ifModifiedSince = req.headers().get(HttpHeaderNames.IF_MODIFIED_SINCE);
+        boolean notModified = false;
+
+        // Add cache headers
+        Calendar time = new GregorianCalendar();
+        response.headers().set(HttpHeaderNames.DATE, DateFormatter.format(time.getTime()));
+        time.add(Calendar.SECOND, HTTP_CACHE_SECONDS);
+        response.headers().set(HttpHeaderNames.EXPIRES, DateFormatter.format(time.getTime()));
+        response.headers().set(HttpHeaderNames.ETAG, eTag);
+        if (lastModified > 0L) {
+            response.headers().set(HttpHeaderNames.LAST_MODIFIED, DateFormatter.format(new Date(lastModified)));
+        }
+        response.headers().set(HttpHeaderNames.CACHE_CONTROL, "private, max-age=" + HTTP_CACHE_SECONDS + ", no-transform");
+
+        if (ifNoneMatchHeaderMatches(ifNoneMatch, eTag)) {
+            notModified = true;
+        } else if (lastModified > 0L && ifModifiedSince != null) {
+            Date ifModSinceDate = DateFormatter.parseHttpDate(ifModifiedSince);
+            if (ifModSinceDate != null) {
+                long ifModSinceTime = ifModSinceDate.getTime();
+                if (ifModSinceTime >= (lastModified / 1000) * 1000) {
+                    notModified = true;
+                }
+            }
+        }
+
+        if (notModified) {
+            // No body for 304; ensure message is delimited on a keep-alive connection
+            HttpUtil.setContentLength(response, 0);
+            response.setStatus(HttpResponseStatus.NOT_MODIFIED);
+        }
+
+        return notModified;
+    }
+
+    /**
+     * @param ifNoneMatch raw {@code If-None-Match} header
+     * @param eTag current strong ETag (quoted)
+     */
+    private static boolean ifNoneMatchHeaderMatches(String ifNoneMatch, String eTag) {
+        if (ifNoneMatch == null || ifNoneMatch.isEmpty()) {
+            return false;
+        }
+        String trimmed = ifNoneMatch.trim();
+        if ("*".equals(trimmed)) {
+            return true;
+        }
+        for (String token : trimmed.split(",")) {
+            if (normalizeEtagToken(token).equals(normalizeEtagToken(eTag))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Normalizes an ETag or {@code If-None-Match} token for comparison (weak prefix, optional quotes).
+     */
+    private static String normalizeEtagToken(String tag) {
+        if (tag == null) {
+            return "";
+        }
+        String t = tag.trim();
+        if (t.startsWith("W/")) {
+            t = t.substring(2).trim();
+        }
+        if (t.length() >= 2 && t.charAt(0) == '"' && t.charAt(t.length() - 1) == '"') {
+            t = t.substring(1, t.length() - 1);
+        }
+        return t;
+    }
+
+    /**
+     * Sends an HTTP {@code HEAD} response that mirrors the metadata of the corresponding
+     * {@code GET} response represented by the provided {@link HttpResponse} object.
+     * <p>
+     * All status information, protocol version, and headers from the supplied {@code response}
+     * are copied so that the HEAD reply exposes exactly the same metadata the GET response
+     * would have sent—except for the message body
+     * <p> 
+     * @param ctx The {@link ChannelHandlerContext} of the session
+     * @param req The {@link FullHttpRequest} containing the request
+     * @param response The {@link HttpResponse} for {@code req} already pre-compiled as if the the content would be server
+     * @implNote
+     * <p> No content is served to the client. Purely the header information is send 
+     */
+    private static void sendResponseForHEAD(ChannelHandlerContext ctx, FullHttpRequest req, HttpResponse response) {
+        DefaultFullHttpResponse headResponse = new DefaultFullHttpResponse(response.protocolVersion(),
+                                                                                response.status(),
+                                                                                Unpooled.EMPTY_BUFFER,
+                                                                                response.headers(),
+                                                                                EmptyHttpHeaders.INSTANCE);
+        ChannelFuture f = ctx.writeAndFlush(headResponse);
+        if (!HttpUtil.isKeepAlive(req)) f.addListener(ChannelFutureListener.CLOSE);
     }
 
     /**
@@ -295,7 +794,7 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
         } catch (IOException ex) {
             com.gmt2001.Console.debug.println("500: " + p.toString());
             com.gmt2001.Console.debug.printStackTrace(ex);
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
         }
     }
 
@@ -309,24 +808,16 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
      * @param p The {@link Path} to the file or directory to check
      * @param directoryAllowed Indicates if directories are allowed. If set to {@code false}, will cause a {@code 403 FORBIDDEN} if {@code p} is a
      * directory
-     * @return {@code true} if the file is valid, not hidden, not a symlink, and is readable. {@code true} if {@code directoryAllowed} is {@code true}
-     * and passed the same tests. {@code false} otherwise
+     * @return and passed the same tests. {@code false} otherwise
      */
     public static boolean checkFilePermissions(ChannelHandlerContext ctx, FullHttpRequest req, Path p, boolean directoryAllowed) {
-        try {
-            if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {
-                com.gmt2001.Console.debug.println("404: " + p.toString());
-                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.NOT_FOUND, null, null));
-                return false;
-            } else if (Files.isHidden(p) || Files.isSymbolicLink(p) || !Files.isReadable(p) || (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS) && !directoryAllowed)) {
-                com.gmt2001.Console.debug.println("403: " + p.toString());
-                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, null, null));
-                return false;
-            }
-        } catch (IOException ex) {
-            com.gmt2001.Console.debug.println("500: " + p.toString());
-            com.gmt2001.Console.debug.printStackTrace(ex);
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null));
+        if (!Files.exists(p)) {
+            com.gmt2001.Console.debug.println("404: " + p.toString());
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.NOT_FOUND));
+            return false;
+        } else if (!PathValidator.isValidPathWebAuth(p.toString()) || (Files.isDirectory(p) && !directoryAllowed)) {
+            com.gmt2001.Console.debug.println("403: " + p.toString());
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN));
             return false;
         }
 
@@ -365,7 +856,7 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
     /**
      * Parses out cookies and converts them to a Map
      *
-     * @param req The {@link FullHttpRequest} containing the request
+     * @param headers The {@link FullHttpRequest} containing the request
      * @return A Map of cookies
      */
     public static Map<String, String> parseCookies(HttpHeaders headers) {
@@ -373,7 +864,7 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
 
         headers.getAll("Cookie").stream().forEach(hcookie -> Arrays.asList(hcookie.split("; ")).stream().forEach(scookie -> {
             String[] cookie = scookie.split("=", 2);
-            cookies.put(cookie[0], cookie[1]);
+            cookies.put(cookie[0], cookie.length == 2 ? cookie[1] : null);
         }));
 
         return cookies;
@@ -390,7 +881,7 @@ public class HttpServerPageHandler extends SimpleChannelInboundHandler<FullHttpR
 
         Stream.of(req.content().toString(Charset.defaultCharset()).split("&")).forEach(ppost -> {
             String[] spost = ppost.split("=", 2);
-            post.put(spost[0], URLDecoder.decode(spost[1], Charset.defaultCharset()));
+            post.put(spost[0], spost.length == 2 ? URLDecoder.decode(spost[1], Charset.defaultCharset()) : null);
         });
 
         return post;

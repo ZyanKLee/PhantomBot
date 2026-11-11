@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@ package com.gmt2001.httpwsserver;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.PrematureChannelClosureException;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpHeaderNames;
@@ -33,8 +34,19 @@ import java.util.List;
  */
 public class HttpSslRedirectHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
-    private static final List<String> ALLOWNONSSLPATHS = List.of("/addons", "/alerts", "/common", "/config/audio-hooks", "/config/gif-alerts",
-            "/favicon", "/obs/poll-chart", "/ws/alertspolls");
+    private static final List<String> ALLOWNONSSLPATHS = List.of(
+            "/addons",
+            "/alerts",
+            "/common",
+            "/config/audio-hooks",
+            "/config/clips",
+            "/config/emotes",
+            "/config/gif-alerts",
+            "/favicon",
+            "/obs/poll-chart",
+            "/presence",
+            "/ws/alertspolls"
+            );
 
     /**
      * Default Constructor
@@ -53,35 +65,51 @@ public class HttpSslRedirectHandler extends SimpleChannelInboundHandler<FullHttp
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
         if (!req.decoderResult().isSuccess()) {
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.BAD_REQUEST, null, null));
+            com.gmt2001.Console.debug.println("400 DECODER");
+            Throwable cause = req.decoderResult().cause();
+            if (!cause.getClass().isAssignableFrom(PrematureChannelClosureException.class)) {
+                com.gmt2001.Console.err.printStackTrace(cause);
+            }
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.BAD_REQUEST));
             return;
         }
-        
+
+        boolean allowNonSsl = false;
+
         QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
         for (String u : ALLOWNONSSLPATHS) {
             if (qsd.path().startsWith(u)) {
-                ReferenceCountUtil.retain(req);
-                ctx.fireChannelRead(req);
-                return;
+                allowNonSsl = true;
+                break;
             }
         }
 
+        if (req.headers().contains(HTTPWSServer.HEADER_X_FORWARDED_HOST) || req.headers().contains(HTTPWSServer.HEADER_CF_RAY)) {
+            allowNonSsl = true;
+        }
+
+        if (allowNonSsl) {
+            ReferenceCountUtil.retain(req);
+            ctx.fireChannelRead(req);
+            return;
+        }
+
         String host = req.headers().get(HttpHeaderNames.HOST);
-        
+
         if (host != null && !host.isBlank()) {
             String uri = "https://" + host + req.uri();
-        
+
             com.gmt2001.Console.debug.println("301: " + uri);
 
-            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.MOVED_PERMANENTLY, null, null);
-        
+            FullHttpResponse res = HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.MOVED_PERMANENTLY);
+
             res.headers().set(HttpHeaderNames.LOCATION, uri);
 
             String origin = req.headers().get(HttpHeaderNames.ORIGIN);
             if (origin != null) {
                 res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
             }
-        
+
             HttpServerPageHandler.sendHttpResponse(ctx, req, res);
         } else {
             HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, "HTTPS Required".getBytes(), null));

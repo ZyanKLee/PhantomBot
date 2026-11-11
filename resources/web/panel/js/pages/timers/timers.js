@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,32 +15,36 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-(function (){
-    let selected = null;
+/* global toastr */
 
-    function openGroupModal(groupData, cb) {
-        const idPrefix = groupData == null ? 'add-' : 'edit-'
-        const title = groupData == null ? 'Add Group' : 'Edit Group',
-              name = groupData == null ? '' : groupData.name,
-              noticeToggle  = groupData == null ? 'Yes' : (groupData.noticeToggle === true ? 'Yes' : 'No'),
-              noticeOfflineToggle = groupData == null ? 'No' : (groupData.noticeOfflineToggle === true ? 'Yes' : 'No'),
-              intervalMin = groupData == null ? '10' : groupData.intervalMin,
-              intervalMax = groupData == null ? '' : (intervalMin === groupData.intervalMax ? '' : groupData.intervalMax),
-              reqMessages = groupData == null ? '0' : groupData.reqMessages,
-              shuffle = groupData == null ? 'No' : (groupData.shuffle === true ? 'Yes' : 'No');
+(function () {
+    let selected = null;
+    let groupData = null;
+
+    function openGroupModal(modalGroupData, cb) {
+        const idPrefix = modalGroupData === null ? 'add-' : 'edit-';
+        const title = modalGroupData === null ? 'Add Group' : 'Edit Group',
+                name = modalGroupData === null ? '' : modalGroupData.name,
+                noticeToggle = modalGroupData === null ? 'Yes' : (helpers.isTrue(modalGroupData.noticeToggle) ? 'Yes' : 'No'),
+                noticeOfflineToggle = modalGroupData === null ? 'No' : (helpers.isTrue(modalGroupData.noticeOfflineToggle) ? 'Yes' : 'No'),
+                intervalMin = modalGroupData === null ? '10' : modalGroupData.intervalMin,
+                intervalMax = modalGroupData === null ? '' : (intervalMin === modalGroupData.intervalMax ? '' : modalGroupData.intervalMax),
+                reqMessages = modalGroupData === null ? '0' : modalGroupData.reqMessages,
+                shuffle = modalGroupData === null ? 'No' : (helpers.isTrue(modalGroupData.shuffle) ? 'Yes' : 'No'),
+                gamesToggle = modalGroupData === null ? 'No' : (helpers.isTrue(modalGroupData.gamesToggle) ? 'Yes' : 'No');
 
         helpers.getModal(idPrefix + 'group-modal', title, 'Save',
-            $('<form/>', {'role': 'form'})
+                $('<form/>', {'role': 'form'})
                 /*
-                name: "Announcements",
-                noticeToggle: noticeToggle,
-                noticeOfflineToggle: noticeOffline,
-                intervalMin: noticeInterval,
-                intervalMax: noticeInterval,
-                reqMessages: noticeReqMessages,
-                shuffle: false,
-                messages: notices
-                */
+                 name: "Announcements",
+                 noticeToggle: noticeToggle,
+                 noticeOfflineToggle: noticeOffline,
+                 intervalMin: noticeInterval,
+                 intervalMax: noticeInterval,
+                 reqMessages: noticeReqMessages,
+                 shuffle: false,
+                 messages: notices
+                 */
                 // Append group name.
                 .append(helpers.getInputGroup(idPrefix + 'group-name', 'text', 'Group Name', 'Group Name', name))
                 // Append toggle.
@@ -54,219 +58,444 @@
                 // Append required messages.
                 .append(helpers.getInputGroup(idPrefix + 'notice-req-messages', 'number', 'Timer Required Messages', '', reqMessages, 'Wait for at least this amount of messages before posting another message from this group in chat.'))
                 // Append shuffle.
-                .append(helpers.getDropdownGroup(idPrefix + 'group-shuffle', 'Shuffle', shuffle, ['Yes', 'No'], "If the group's messages should be said in random order.")),
-            // Callback once the user clicks save.
-            function() {// Callback once we click the save button.
-                const $groupName = $('#' + idPrefix + 'group-name'),
-                      $noticeToggle = $('#' + idPrefix + 'notice-toggle'),
-                      $noticeOfflineToggle = $('#' + idPrefix + 'notice-offline-toggle'),
-                      $noticeIntervalMin = $('#' + idPrefix + 'notice-interval-min'),
-                      $noticeIntervalMax = $('#' + idPrefix + 'notice-interval-max'),
-                      $noticeReqMsg = $('#' + idPrefix + 'notice-req-messages'),
-                      $groupShuffle = $('#' + idPrefix + 'group-shuffle');
+                .append(helpers.getDropdownGroup(idPrefix + 'group-shuffle', 'Shuffle', shuffle, ['Yes', 'No'], "If the group's messages should be said in random order."))
+                // Append games toggle.
+                .append(helpers.getDropdownGroup(idPrefix + 'group-games-toggle', 'Only Specific Games', gamesToggle, ['Yes', 'No'], "If the group's messages will be sent only when the current game is in the specified list of games. If disabled, the list of games will be cleared.")),
+                // Callback once the user clicks save.
+                        function () {// Callback once we click the save button.
+                            const $groupName = $('#' + idPrefix + 'group-name'),
+                                    $noticeToggle = $('#' + idPrefix + 'notice-toggle'),
+                                    $noticeOfflineToggle = $('#' + idPrefix + 'notice-offline-toggle'),
+                                    $noticeIntervalMin = $('#' + idPrefix + 'notice-interval-min'),
+                                    $noticeIntervalMax = $('#' + idPrefix + 'notice-interval-max'),
+                                    $noticeReqMsg = $('#' + idPrefix + 'notice-req-messages'),
+                                    $groupShuffle = $('#' + idPrefix + 'group-shuffle'),
+                                    $groupGamesToggle = $('#' + idPrefix + 'group-games-toggle');
 
-                // Handle each input to make sure they have a value.
-                switch (false) {
-                    case helpers.handleInputString($groupName):
-                    case helpers.handleInput($noticeIntervalMin, function (obj) {
-                        if (obj.val().length === 0) {
-                            return "Cannot be empty";
+                            // Handle each input to make sure they have a value.
+                            switch (false) {
+                                case helpers.handleInputString($groupName):
+                                case helpers.handleInput($noticeIntervalMin, function (obj) {
+                                if (obj.val().length === 0) {
+                                return "Cannot be empty";
+                                }
+                                if (!isFinite(obj.val())) {
+                                return "Please enter a number.";
+                                }
+                                const min = parseFloat(obj.val());
+                                        if (min < 0.25) {
+                                return "Number must be greater or equal 0.25";
+                                }
+                                if (parseFloat($noticeIntervalMax.val()) < min) {
+                                return "Number must be less or equal to Timer Interval Maximum";
+                                }
+                                return null;
+                                }):
+                                case helpers.handleInput($noticeIntervalMax, function (obj) {
+                                if (obj.val().length === 0) {
+                                obj.val($noticeIntervalMin.val());
+                                        return null;
+                                }
+                                if (!isFinite(obj.val())) {
+                                return "Please enter a number or leave blank.";
+                                }
+                                if (parseFloat($noticeIntervalMin.val()) > parseFloat(obj.val())) {
+                                return "Number must be greater or equal to Timer Interval Minimum";
+                                }
+                                return null;
+                                }):
+                                case helpers.handleInputNumber($noticeReqMsg):
+                                    break;
+                                default:
+                                    cb({
+                                        groupName: $groupName.val(),
+                                        noticeToggle: $noticeToggle.find(':selected').text() === 'Yes',
+                                        noticeOfflineToggle: $noticeOfflineToggle.find(':selected').text() === 'Yes',
+                                        noticeIntervalMin: Number($noticeIntervalMin.val()),
+                                        noticeIntervalMax: Number($noticeIntervalMax.val() || $noticeIntervalMin.val()),
+                                        noticeReqMsg: Number($noticeReqMsg.val()),
+                                        groupShuffle: $groupShuffle.find(':selected').text() === 'Yes',
+                                        gamesToggle: $groupGamesToggle.find(':selected').text() === 'Yes'
+                                    });
+                            }
                         }
-                        if (!isFinite(obj.val())) {
-                            return "Please enter a number.";
-                        }
-                        const min = parseFloat(obj.val());
-                        if (min < 0.25) {
-                            return "Number must be greater or equal 0.25";
-                        }
-                        if (parseFloat($noticeIntervalMax.val()) < min) {
-                            return "Number must be less or equal to Timer Interval Maximum";
-                        }
-                        return null;
-                    }):
-                    case helpers.handleInput($noticeIntervalMax, function (obj) {
-                        if (obj.val().length === 0) {
-                            obj.val($noticeIntervalMin.val());
-                            return null;
-                        }
-                        if (!isFinite(obj.val())) {
-                            return "Please enter a number or leave blank.";
-                        }
-                        if (parseFloat($noticeIntervalMin.val()) > parseFloat(obj.val())) {
-                            return "Number must be greater or equal to Timer Interval Minimum";
-                        }
-                        return null;
-                    }):
-                    case helpers.handleInputNumber($noticeReqMsg):
-                        break;
-                    default:
-                        cb({
-                            groupName: $groupName.val(),
-                            noticeToggle: $noticeToggle.find(':selected').text() === 'Yes',
-                            noticeOfflineToggle: $noticeOfflineToggle.find(':selected').text() === 'Yes',
-                            noticeIntervalMin: Number($noticeIntervalMin.val()),
-                            noticeIntervalMax: Number($noticeIntervalMax.val() || $noticeIntervalMin.val()),
-                            noticeReqMsg: Number($noticeReqMsg.val()),
-                            groupShuffle: $groupShuffle.find(':selected').text() === 'Yes'
-                        });
-                }
+            ).modal('toggle');
+    }
+
+    function select(resultsLength) {
+        if (selected === null) {
+            if (resultsLength > 0) {
+                showGroupMessages(0);
+            } else {
+                showGroupMessages(null);
             }
-        ).modal('toggle');
+        } else {
+            if (resultsLength === 0) {
+                showGroupMessages(null);
+            } else if (selected >= resultsLength || selected < 0) {
+                showGroupMessages(resultsLength - 1);
+            } else {
+                showGroupMessages(selected);
+            }
+        }
     }
 
     // Function that queries all of the data we need.
     function run() {
         // Check if the module is enabled.
-        socket.getDBValue('notice_module_toggle', 'modules', './systems/noticeSystem.js', function(e) {
+        socket.getDBValue('notice_module_toggle', 'modules', './systems/noticeSystem.js', function (e) {
             // If the module is off, don't load any data.
             if (!helpers.handleModuleLoadUp('noticesModule', e.modules)) {
                 return;
             }
 
             // Query timer groups
-            socket.getDBTableValues('timers_get_all', 'notices', function(results) {
+            socket.getDBTableValues('timers_get_all', 'notices', function (results) {
                 let tableData = [];
                 for (let i = 0; i < results.length; i++) {
                     const groupId = results[i].key,
-                          groupName = JSON.parse(results[i].value).name;
+                            groupName = JSON.parse(results[i].value).name;
                     tableData.push([
                         groupId,
                         groupName,
                         $('<div/>', {
                             'class': 'btn-group'
-                        }).append($('<button/>', {
-                            'type': 'button',
-                            'class': 'btn btn-xs btn-danger btn-group-delete',
-                            'style': 'float: right',
-                            'data-group-id': groupId,
-                            'data-group-name': groupName,
-                            'html': $('<i/>', { 'class': 'fa fa-trash' })
-                        })).append($('<button/>', {
-                            'type': 'button',
-                            'class': 'btn btn-xs btn-warning btn-group-settings',
-                            'style': 'float: right',
-                            'data-group-id': groupId,
-                            'data-group-name': groupName,
-                            'html': $('<i/>', { 'class': 'fa fa-cog' })
-                        })).append($('<button/>', {
-                            'type': 'button',
-                            'class': 'btn btn-xs btn-success btn-group-edit',
-                            'style': 'float: right',
-                            'data-group-id': groupId,
-                            'data-group-name': groupName,
-                            'html': $('<i/>', { 'class': 'fa fa-edit' })
-                        })).html()
+                        }).append([
+                            $('<button/>', {
+                                'type': 'button',
+                                'class': 'btn btn-xs btn-warning btn-group-settings',
+                                'style': 'width: 20px;',
+                                'data-group-id': groupId,
+                                'data-group-name': groupName,
+                                'html': $('<i/>', {'class': 'fa fa-cog'})
+                            }),
+                            $('<button/>', {
+                                'type': 'button',
+                                'class': 'btn btn-xs btn-danger btn-group-delete',
+                                'style': 'float: width: 20px; position: relative; left: -1px;',
+                                'data-group-id': groupId,
+                                'data-group-name': groupName,
+                                'html': $('<i/>', {'class': 'fa fa-trash'})
+                            }),
+                            $('<br/>'),
+                            $('<button/>', {
+                                'type': 'button',
+                                'class': 'btn btn-xs btn-success btn-group-edit',
+                                'style': 'width: 20px; position: relative; left: -1px; top: -1px;',
+                                'data-group-id': groupId,
+                                'data-group-name': groupName,
+                                'html': $('<i/>', {'class': 'fa fa-edit', 'style': 'position: relative; left: -1px;'})
+                            }),
+                            $('<button/>', {
+                                'type': 'button',
+                                'class': 'btn btn-xs btn-info btn-group-games',
+                                'style': 'width: 20px; position: relative; left: -1px; top: -1px;',
+                                'data-group-id': groupId,
+                                'data-group-name': groupName,
+                                'html': $('<i/>', {'class': 'fa fa-gamepad', 'style': 'position: relative; left: -2px;'})
+                            })
+                        ]).html()
                     ]);
                 }
 
                 const $groupTable = $('#groups-table');
                 // if the table exists, destroy it.
                 if ($.fn.DataTable.isDataTable('#groups-table')) {
-                    $groupTable.DataTable().destroy();
-                    // Remove all of the old events.
-                    $groupTable.off();
+                    $groupTable.DataTable().clear().rows.add(tableData).invalidate().draw(false);
+                    select(results.length);
+                    return;
                 }
 
                 // Create groups table.
                 let table = $groupTable.DataTable({
                     'searching': true,
                     'autoWidth': false,
-                    'lengthChange': false,
                     'data': tableData,
                     'columnDefs': [
-                        { 'className': 'default-table', 'width': '70px', 'orderable': false, 'targets': 2 },
-                        { 'width': '3%', 'targets': 0 }
+                        {'className': 'default-table', 'width': '70px', 'orderable': false, 'targets': 2},
+                        {'width': '3%', 'targets': 0}
                     ],
                     'columns': [
-                        { 'title': 'Id' },
-                        { 'title': 'Name' },
-                        { 'title': 'Actions' }
+                        {'title': 'Id'},
+                        {'title': 'Name'},
+                        {'title': 'Actions'}
                     ]
                 });
 
                 // On delete button.
-                table.on('click', '.btn-group-delete', function() {
+                table.on('click', '.btn-group-delete', function () {
                     const groupId = $(this).data('groupId').toString(),
-                        groupName = $(this).data('groupName');
+                            groupName = $(this).data('groupName');
 
                     // Ask the user if he want to remove the timer.
                     helpers.getConfirmDeleteModal('timer_modal_remove_group',
-                        'Are you sure you want to permanently delete the timer group "' + groupName + '" with all its messages?', true,
-                        'You\'ve successfully removed the group "' + groupName + '"!', function() {
-                            // Remove the group
-                            socket.wsEvent('timer_group_remove_ws', './systems/noticeSystem.js', null,
-                                ['removeGroup', groupId], function() {
+                            'Are you sure you want to permanently delete the timer group "' + groupName + '" with all its messages?', true,
+                            'You\'ve successfully removed the group "' + groupName + '"!', function () {
+                                // Remove the group
+                                socket.wsEvent('timer_group_remove_ws', './systems/noticeSystem.js', null,
+                                        ['removeGroup', groupId], function () {
                                     // Reload the table.
+                                    if ($(this).data('groupId') === selected) {
+                                        selected = null;
+                                    } else if (selected > $(this).data('groupId')) {
+                                        selected--;
+                                    }
                                     run();
-                                }
-                            );
-                        }
+                                });
+                            }
                     );
                 });
 
                 // On edit group button.
-                table.on('click', '.btn-group-settings', function() {
+                table.on('click', '.btn-group-settings', function () {
                     const groupId = $(this).data('groupId').toString(),
-                          $this = $(this);
+                            $this = $(this);
 
-                    socket.getDBValue('timer_group_edit_get', 'notices', groupId, function(e) {
-                        let groupData = e.notices;
-                        if (groupData == null) {
-                            run();  // group doesn't exist anymore => reload
+                    socket.getDBValue('timer_group_edit_get', 'notices', groupId, function (e) {
+                        let modalGroupData = e.notices;
+                        if (modalGroupData === null) {
+                            run(); // group doesn't exist anymore => reload
                         }
-                        groupData = JSON.parse(groupData);
-                        openGroupModal(groupData, function(result) {
-                            socket.updateDBValue('timer_group_edit_update', 'notices', groupId, JSON.stringify({
-                                name: result.groupName,
-                                noticeToggle: result.noticeToggle,
-                                noticeOfflineToggle: result.noticeOfflineToggle,
-                                intervalMin: result.noticeIntervalMin,
-                                intervalMax: result.noticeIntervalMax,
-                                reqMessages: result.noticeReqMsg,
-                                shuffle: result.groupShuffle,
-                                messages: groupData.messages,
-                                disabled: groupData.disabled,
-                            }), function () {
+                        modalGroupData = JSON.parse(modalGroupData);
+                        openGroupModal(modalGroupData, function (result) {
+                            let newData = JSON.parse(JSON.stringify(modalGroupData));
+                            newData.name = result.groupName;
+                            newData.noticeToggle = result.noticeToggle;
+                            newData.noticeOfflineToggle = result.noticeOfflineToggle;
+                            newData.intervalMin = result.noticeIntervalMin;
+                            newData.intervalMax = result.noticeIntervalMax;
+                            newData.reqMessages = result.noticeReqMsg;
+                            newData.shuffle = result.groupShuffle;
+                            newData.gamesToggle = result.gamesToggle;
+
+                            if (!helpers.isTrue(result.gamesToggle)) {
+                                newData.games = [];
+                            }
+
+                            socket.updateDBValue('timer_group_edit_update', 'notices', groupId, JSON.stringify(newData), function () {
                                 socket.wsEvent('timer_group_edit_ws', './systems/noticeSystem.js', null,
-                                    ['reloadGroup', groupId], function() {
-                                        // Update group name in table.
-                                        $this.parents('tr').find('td:eq(1)').text(result.groupName);
-                                        if (selected === Number(groupId)) {
-                                            // reload the messages table
-                                            showGroupMessages(selected);
-                                        }
-                                        // Close the modal.
-                                        $('#edit-group-modal').modal('hide');
-                                        // Alert the user.
-                                        toastr.success('Successfully edited the timer group!');
+                                        ['reloadGroup', groupId, (modalGroupData.intervalMin !== result.noticeIntervalMin || modalGroupData.intervalMax !== result.noticeIntervalMax) ? 'true' : 'false'], function () {
+                                    // Update group name in table.
+                                    $this.parents('tr').find('td:eq(1)').text(result.groupName);
+                                    if (selected === Number(groupId)) {
+                                        // reload the messages table
+                                        showGroupMessages(selected);
                                     }
-                                );
+                                    // Close the modal.
+                                    $('#edit-group-modal').modal('hide');
+                                    // Alert the user.
+                                    toastr.success('Successfully edited the timer group!');
+                                });
                             });
                         });
                     });
                 });
 
                 // On edit button.
-                table.on('click', '.btn-group-edit', function() {
+                table.on('click', '.btn-group-edit', function () {
                     const groupId = Number($(this).data('groupId'));
                     showGroupMessages(groupId);
                 });
 
-                if (selected == null) {
-                    if (results.length > 0) {
-                        showGroupMessages(0);
-                    } else {
-                        showGroupMessages(null)
-                    }
-                } else {
-                    if (selected >= results.length) {
-                        showGroupMessages(results.length - 1);
-                    } else if (selected < 0) {
-                        showGroupMessages(results.length + (selected % results.length));
-                    } else {
-                        showGroupMessages(selected);
-                    }
-                }
+                // On games button.
+                table.on('click', '.btn-group-games', function () {
+                    const groupId = Number($(this).data('groupId'));
+                    socket.getDBValue('timer_group_games_toggle_get', 'notices', groupId, function (e) {
+                        let modalGroupData = e.notices;
+                        if (modalGroupData === null) {
+                            run(); // group doesn't exist anymore => reload
+                        }
+                        modalGroupData = JSON.parse(modalGroupData);
+
+                        if (!helpers.isTrue(modalGroupData.gamesToggle)) {
+                            toastr.warning('The "Only Specific Games" option is disabled for this group. Please enable it first in the group settings.');
+                            return;
+                        }
+
+                        if (!modalGroupData.hasOwnProperty('games')) {
+                            modalGroupData.games = [];
+                        }
+
+                        let tableData = [];
+                        for (let i = 0; i < modalGroupData.games.length; i++) {
+                            tableData.push([
+                                i,
+                                modalGroupData.games[i],
+                                $('<div/>', {
+                                    'class': 'btn-group'
+                                }).append($('<button/>', {
+                                    'type': 'button',
+                                    'class': 'btn btn-xs btn-danger btn-group-delete',
+                                    'style': 'float: right',
+                                    'data-game-id': i,
+                                    'data-game-name': modalGroupData.games[i],
+                                    'html': $('<i/>', {'class': 'fa fa-trash'})
+                                })).html()
+                            ]);
+                        }
+
+                        const gamesTableElm = $('<table/>', {
+                            'id': 'games-table',
+                            'class': 'table table-bordered table-hover'
+                        });
+                        const gamesTable = gamesTableElm.DataTable({
+                            'searching': true,
+                            'autoWidth': false,
+                            'data': tableData,
+                            'columnDefs': [
+                                {'className': 'default-table', 'width': '70px', 'orderable': false, 'targets': 2},
+                                {'width': '3%', 'targets': 0}
+                            ],
+                            'columns': [
+                                {'title': 'Id'},
+                                {'title': 'Name'},
+                                {'title': 'Actions'}
+                            ]
+                        });
+                        gamesTable.on('click', '.btn-group-delete', function () {
+                            const gameId = Number($(this).data('gameId'));
+                            // Ask the user if he want to remove the game.
+                            helpers.getConfirmDeleteModal('timer_modal_remove_game',
+                                    'Are you sure you want to delete the game "' + $(this).data('gameName') + '"?', true,
+                                    'You\'ve successfully removed the game "' + $(this).data('gameName') + '"!', function () {
+                                        modalGroupData.games.splice(gameId, 1);
+                                        tableData = [];
+                                        for (let i = 0; i < modalGroupData.games.length; i++) {
+                                            tableData.push([
+                                                i,
+                                                modalGroupData.games[i],
+                                                $('<div/>', {
+                                                    'class': 'btn-group'
+                                                }).append($('<button/>', {
+                                                    'type': 'button',
+                                                    'class': 'btn btn-xs btn-danger btn-group-delete',
+                                                    'style': 'float: right',
+                                                    'data-game-id': i,
+                                                    'data-game-name': modalGroupData.games[i],
+                                                    'html': $('<i/>', {'class': 'fa fa-trash'})
+                                                })).html()
+                                            ]);
+                                        }
+                                        gamesTable.clear().rows.add(tableData).invalidate().draw(false);
+                                });
+                            });
+                        const searchGameSelectElm = $('<select/>', {
+                            'class': 'form-control',
+                            'id': 'add-game',
+                            'placeholder': 'Search for a Game or Category',
+                            'data-str': 'text'
+                        });
+                        const searchGameElm = $('<div/>', {
+                            'class': 'form-group'
+                        }).append($('<label/>', {
+                            'html': $('<b/>', {
+                                'text': 'Add Game'
+                            })
+                        })).append($('<button/>', {
+                                    'type': 'button',
+                                    'class': 'btn btn-xs btn-success btn-add-game',
+                                    'style': 'float: right',
+                                    'html': $('<i/>', {'class': 'fa fa-plus'})
+                                })).append(searchGameSelectElm);
+
+                        searchGameElm.on('click', '.btn-add-game', function () {
+                            const gameName = searchGameSelectElm.val();
+                            if (gameName === null || gameName.length === 0 || modalGroupData.games.includes(gameName)) {
+                                return;
+                            }
+                            modalGroupData.games.push(gameName);
+                            tableData = [];
+                            for (let i = 0; i < modalGroupData.games.length; i++) {
+                                tableData.push([
+                                    i,
+                                    modalGroupData.games[i],
+                                    $('<div/>', {
+                                        'class': 'btn-group'
+                                    }).append($('<button/>', {
+                                        'type': 'button',
+                                        'class': 'btn btn-xs btn-danger btn-group-delete',
+                                        'style': 'float: right',
+                                        'data-game-id': i,
+                                        'data-game-name': modalGroupData.games[i],
+                                        'html': $('<i/>', {'class': 'fa fa-trash'})
+                                    })).html()
+                                ]);
+                            }
+                            gamesTable.clear().rows.add(tableData).invalidate().draw(false);
+                        });
+
+                        let games = {};
+                        let isDoneGames = false;
+                        function getGames(params) {
+                            isDoneGames = false;
+                            socket.doRemote('games', 'games', {
+                                'search': params.data.q
+                            }, function (e) {
+                                if (e.results && e.results.length > 0 && !e.results[0].errors) {
+                                    games = e;
+                                } else {
+                                    games = false;
+                                }
+                                isDoneGames = true;
+                            });
+                        }
+
+                        async function checkIfGamesDoneAsync() {
+                            return isDoneGames;
+                        }
+
+                        // Input check for strings.
+                        $('input[data-str="text"]').on('input', function () {
+                            helpers.handleInputString($(this));
+                        });
+                        helpers.getModal('games-group-modal', "Edit Games", 'Save',
+                            $('<form/>', {'role': 'form'})
+                            .append($('<div/>', {
+                                'class': 'box-body',
+                                'html': 'When the "Only Specific Games" option is enabled, the group\'s messages will only be sent when the current game is in the specified list of games.'
+                            }))
+                            .append(searchGameElm)
+                            .append(gamesTableElm),
+                            // Callback once the user clicks save.
+                                    function () {// Callback once we click the save button.
+                                        socket.updateDBValue('timer_group_games_list_update', 'notices', groupId, JSON.stringify(modalGroupData), function () {
+                                            socket.wsEvent('timer_group_games_list_ws', './systems/noticeSystem.js', null,
+                                                    ['reloadGroup', String(groupId)], function () {
+                                                // Close the modal.
+                                                $('#games-group-modal').modal('hide');
+                                                // Alert the user.
+                                                toastr.success('Successfully updated the games list!');
+                                            });
+                                        });
+                                    }
+                            ).modal('toggle');
+
+                        setTimeout(function () {
+                            searchGameSelectElm.select2({
+                                ajax: {
+                                    delay: 500,
+                                    transport: async function(params, success, failure) {
+                                        getGames(params);
+
+                                        await helpers.promisePoll(() => checkIfGamesDoneAsync(), {pollIntervalMs: 100});
+
+                                        if (games === false) {
+                                            failure('500');
+                                        } else {
+                                            success(games);
+                                        }
+                                    }
+                                },
+                                dropdownParent: $('#games-group-modal'),
+                                minimumInputLength: 1,
+                                tags: false,
+                                width: '100%'
+                            });
+                        }, 500);
+                    });
+                });
+
+                select(results.length);
             });
         });
     }
@@ -276,21 +505,25 @@
         selected = groupId;
         const $messageBox = $('#messages-box');
         const $messagesTable = $('#messages-table');
-        if (groupId == null) {
+        if (selected === null) {
             $messageBox.addClass("hidden");
             return;
         }
 
-        socket.getDBValue('timer_messages_edit_get', 'notices', String(groupId), function(e) {
-            let groupData = e.notices;
-            if (groupData == null) {
-                run();  // group doesn't exist anymore => reload
+        socket.getDBValue('timer_messages_edit_get', 'notices', String(selected), function (e) {
+            let tempGroupData = e.notices;
+            if (tempGroupData === null) {
+                run(); // group doesn't exist anymore => reload
                 return;
             }
-            groupData = JSON.parse(groupData);
+            groupData = JSON.parse(tempGroupData);
 
             function messageRowData(i) {
                 return [
+                    $('<i/>', {
+                        'class': 'fa fa-bars',
+                        'style': 'cursor: grab'
+                    }).prop('outerHTML'),
                     i,
                     groupData.messages[i],
                     $('<div/>', {
@@ -300,13 +533,13 @@
                         'class': 'btn btn-xs btn-danger btn-group-delete',
                         'style': 'float: right',
                         'data-message-id': i,
-                        'html': $('<i/>', { 'class': 'fa fa-trash' })
+                        'html': $('<i/>', {'class': 'fa fa-trash'})
                     })).append($('<button/>', {
                         'type': 'button',
                         'class': 'btn btn-xs btn-success btn-group-edit',
                         'style': 'float: right',
                         'data-message-id': i,
-                        'html': $('<i/>', { 'class': 'fa fa-edit' })
+                        'html': $('<i/>', {'class': 'fa fa-edit'})
                     })).append($('<button/>', {
                         'type': 'button',
                         'class': 'btn btn-xs btn-group-toggle btn-' + (groupData.disabled[i] ? 'warning' : 'success'),
@@ -330,137 +563,158 @@
 
             // if the table exists, destroy it.
             if ($.fn.DataTable.isDataTable('#messages-table')) {
-                $messagesTable.DataTable().destroy();
-                // Remove all of the old events.
-                $messagesTable.off();
+                $messagesTable.DataTable().clear().rows.add(tableData).invalidate().draw(false);
+                return;
             }
 
             // Create messages table.
             let table = $messagesTable.DataTable({
                 'searching': true,
                 'autoWidth': false,
-                'lengthChange': false,
                 'data': tableData,
+                'order': [[1, 'asc']],
                 'columnDefs': [
-                    { 'className': 'default-table', 'width': '70px', 'orderable': false, 'targets': 2 },
-                    { 'width': '3%', 'targets': 0 }
+                    {'width': '1%', 'orderable': false, 'targets': 0},
+                    {'className': 'default-table', 'width': '70px', 'orderable': false, 'targets': 3},
+                    {'width': '3%', 'targets': 1}
                 ],
                 'columns': [
-                    { 'title': 'Id' },
-                    { 'title': 'Text' },
-                    { 'title': 'Actions' }
-                ]
+                    {'title': ' '},
+                    {'title': 'Id'},
+                    {'title': 'Text'},
+                    {'title': 'Actions'}
+                ],
+                'rowReorder': {
+                    'selector': 'td:first-child',
+                    'dataSrc': 1
+                }
+            });
+
+            table.on('row-reordered', (e, diff) => {
+                let newData = JSON.parse(JSON.stringify(groupData));
+                for (var i = 0, ien = diff.length; i < ien; i++) {
+                    newData.disabled[diff[i].newData] = groupData.disabled[diff[i].oldData];
+                    newData.messages[diff[i].newData] = groupData.messages[diff[i].oldData];
+                    $(diff[i].node).children('[data-message-id]').data('messageId', diff[i].newData);
+                }
+                groupData = newData;
+
+                socket.updateDBValue('timer_group_reorder_message_update', 'notices', String(selected), JSON.stringify(groupData), function () {
+                    socket.wsEvent('timer_group_reorder_message_ws', './systems/noticeSystem.js', null,
+                            ['reloadGroup', String(selected)], function () {
+                        table.draw(false);
+                    });
+                });
             });
 
             // Add message button.
-            $('#add-message-button').off('click').on('click', function() {
+            $('#add-message-button').off('click').on('click', function () {
                 helpers.getModal('add-message', 'Add Message', 'Save',
-                    $('<form/>', { 'role': 'form'})
+                        $('<form/>', {'role': 'form'})
                         // Append timer text.
-                        .append(helpers.getTextAreaGroup('message-text', 'text', 'Message', 'Follow me on Twitter! https://twitter.com/PhantomBotApp', '', 'Message of this timer. Use the "command:" prefix then the name of the command to run a command.')),
-                    // Callback once the user clicks save.
-                    function() {// Callback once we click the save button.
-                        const $messageText = $('#message-text');
+                        .append(helpers.getTextAreaGroup('message-text', 'text', 'Message', 'Follow me on Instagram! https://instagram.com/CoolPerson', '', 'Message of this timer. Use the "command:" prefix then the name of the command to run a command.')),
+                        // Callback once the user clicks save.
+                                function () {// Callback once we click the save button.
+                                    const $messageText = $('#message-text');
 
-                        // Handle each input to make sure they have a value.
-                        switch (false) {
-                            case helpers.handleInputString($messageText):
-                                break;
-                            default:
-                                groupData.messages.push($messageText.val());
-                                groupData.disabled.push(false);
-                                socket.updateDBValue('timer_group_add_message_update', 'notices', String(groupId), JSON.stringify(groupData), function () {
-                                    socket.wsEvent('timer_group_add_message_ws', './systems/noticeSystem.js', null,
-                                        ['reloadGroup', String(groupId)], function() {
-                                            // Update group name in table.
-                                            table.rows.add([messageRowData(groupData.messages.length - 1)]);
-                                            table.draw(false);
-                                            // Close the modal.
-                                            $('#add-message').modal('hide');
-                                            // Alert the user.
-                                            toastr.success('Successfully added message!');
-                                        }
-                                    );
-                                });
-                        }
-                    }
-                ).modal('toggle');
-            });
+                                    // Handle each input to make sure they have a value.
+                                    switch (false) {
+                                        case helpers.handleInputString($messageText):
+                                            break;
+                                        default:
+                                            groupData.messages.push($messageText.val());
+                                            groupData.disabled.push(false);
+                                            socket.updateDBValue('timer_group_add_message_update', 'notices', String(selected), JSON.stringify(groupData), function () {
+                                                socket.wsEvent('timer_group_add_message_ws', './systems/noticeSystem.js', null,
+                                                        ['reloadGroup', String(selected)], function () {
+                                                    // Update group name in table.
+                                                    table.rows.add([messageRowData(groupData.messages.length - 1)]);
+                                                    table.draw(false);
+                                                    // Close the modal.
+                                                    $('#add-message').modal('hide');
+                                                    // Alert the user.
+                                                    toastr.success('Successfully added message!');
+                                                });
+                                            });
+                                    }
+                                }
+                        ).modal('toggle');
+                    });
 
             // Delete message button
-            table.on('click', '.btn-group-delete', function() {
+            table.on('click', '.btn-group-delete', function () {
                 const messageId = Number($(this).data('messageId'));
                 // Ask the user if he want to remove the timer.
                 helpers.getConfirmDeleteModal('timer_modal_remove_message',
-                    'Are you sure you want to permanently delete the message?', true,
-                    'You\'ve successfully removed the message!', function() {
-                        // Remove the message
-                        groupData.messages.splice(messageId, 1);
-                        groupData.disabled.splice(messageId, 1);
-                        table.rows(messageId).remove();
-                        table.draw(false);
-                        socket.updateDBValue('timer_group_remove_message_update', 'notices', String(groupId), JSON.stringify(groupData), function () {
-                            socket.wsEvent('timer_group_remove_message_ws', './systems/noticeSystem.js', null,
-                                ['reloadGroup', String(groupId)], function () { }
-                            );
-                        });
-                    }
+                        'Are you sure you want to permanently delete the message?', true,
+                        'You\'ve successfully removed the message!', function () {
+                            // Remove the message
+                            groupData.messages.splice(messageId, 1);
+                            groupData.disabled.splice(messageId, 1);
+                            table.rows(messageId).remove();
+                            table.draw(false);
+                            socket.updateDBValue('timer_group_remove_message_update', 'notices', String(selected), JSON.stringify(groupData), function () {
+                                socket.wsEvent('timer_group_remove_message_ws', './systems/noticeSystem.js', null,
+                                        ['reloadGroup', String(selected)], function () {
+                                    showGroupMessages(selected);
+                                });
+                            });
+                        }
                 );
             });
 
             // Edit message button.
-            table.on('click', '.btn-group-edit', function() {
+            table.on('click', '.btn-group-edit', function () {
                 const messageId = Number($(this).data('messageId'));
                 helpers.getModal('edit-message', 'Edit Message', 'Save',
-                    $('<form/>', { 'role': 'form'})
+                        $('<form/>', {'role': 'form'})
                         // Append timer text.
-                        .append(helpers.getTextAreaGroup('message-text', 'text', 'Message', 'Follow me on Twitter! https://twitter.com/PhantomBotApp', groupData.messages[messageId], 'Message of this timer. Use the "command:" prefix then the name of the command to run a command.')),
-                    // Callback once the user clicks save.
-                    function() {// Callback once we click the save button.
-                        const $messageText = $('#message-text');
+                        .append(helpers.getTextAreaGroup('message-text', 'text', 'Message', 'Follow me on Instagram! https://instagram.com/CoolPerson', groupData.messages[messageId], 'Message of this timer. Use the "command:" prefix then the name of the command to run a command.')),
+                        // Callback once the user clicks save.
+                                function () {// Callback once we click the save button.
+                                    const $messageText = $('#message-text');
 
-                        // Handle each input to make sure they have a value.
-                        switch (false) {
-                            case helpers.handleInputString($messageText):
-                                break;
-                            default:
-                                groupData.messages[messageId] = $messageText.val();
-                                socket.updateDBValue('timer_group_add_message_update', 'notices', String(groupId), JSON.stringify(groupData), function () {
-                                    socket.wsEvent('timer_group_add_message_ws', './systems/noticeSystem.js', null,
-                                        ['reloadGroup', String(groupId)], function() {
-                                            // Update group name in table.
-                                            table.row(messageId).data(messageRowData(messageId));
-                                            table.draw(false);
-                                            // Close the modal.
-                                            $('#edit-message').modal('hide');
-                                            // Alert the user.
-                                            toastr.success('Successfully edited message!');
-                                        }
-                                    );
-                                });
-                        }
-                    }
-                ).modal('toggle');
-            });
+                                    // Handle each input to make sure they have a value.
+                                    switch (false) {
+                                        case helpers.handleInputString($messageText):
+                                            break;
+                                        default:
+                                            groupData.messages[messageId] = $messageText.val();
+                                            socket.updateDBValue('timer_group_add_message_update', 'notices', String(selected), JSON.stringify(groupData), function () {
+                                                socket.wsEvent('timer_group_add_message_ws', './systems/noticeSystem.js', null,
+                                                        ['reloadGroup', String(selected)], function () {
+                                                    // Update group name in table.
+                                                    table.row(messageId).data(messageRowData(messageId));
+                                                    table.draw(false);
+                                                    // Close the modal.
+                                                    $('#edit-message').modal('hide');
+                                                    // Alert the user.
+                                                    toastr.success('Successfully edited message!');
+                                                });
+                                            });
+                                    }
+                                }
+                        ).modal('toggle');
+                    });
 
             // Toggle message button.
-            table.on('click', '.btn-group-toggle', function() {
+            table.on('click', '.btn-group-toggle', function () {
                 const $this = $(this);
                 const messageId = Number($this.data('messageId'));
                 groupData.disabled[messageId] = !groupData.disabled[messageId];
-                socket.updateDBValue('timer_group_toggle_message_update', 'notices', String(groupId), JSON.stringify(groupData), function () {
+                socket.updateDBValue('timer_group_toggle_message_update', 'notices', String(selected), JSON.stringify(groupData), function () {
                     socket.wsEvent('timer_group_toggle_message_ws', './systems/noticeSystem.js', null,
-                        ['reloadGroup', String(groupId)], function() {
-                            toastr.success('successfully ' + (!groupData.disabled[messageId] ? 'enabled' : 'disabled') + ' the notice.');
-                            // Update the button.
-                            if (groupData.disabled[messageId]) {
-                                $this.removeClass('btn-success').addClass('btn-warning').find('i').removeClass('fa-close').addClass('fa-check');
-                                $this.prop('title', 'Click to enable the notice.').tooltip('fixTitle').tooltip('show');
-                            } else {
-                                $this.removeClass('btn-warning').addClass('btn-success').find('i').removeClass('fa-check').addClass('fa-close');
-                                $this.prop('title', 'Click to disable the notice.').tooltip('fixTitle').tooltip('show');
-                            }
+                            ['reloadGroup', String(selected)], function () {
+                        toastr.success('successfully ' + (!groupData.disabled[messageId] ? 'enabled' : 'disabled') + ' the notice.');
+                        // Update the button.
+                        if (groupData.disabled[messageId]) {
+                            $this.removeClass('btn-success').addClass('btn-warning').find('i').removeClass('fa-close').addClass('fa-check');
+                            $this.prop('title', 'Click to enable the notice.').tooltip('fixTitle').tooltip('show');
+                        } else {
+                            $this.removeClass('btn-warning').addClass('btn-success').find('i').removeClass('fa-check').addClass('fa-close');
+                            $this.prop('title', 'Click to disable the notice.').tooltip('fixTitle').tooltip('show');
                         }
+                    }
                     );
                 });
             });
@@ -470,36 +724,35 @@
     }
 
     // Function that handlers the loading of events.
-    $(function() {
+    $(function () {
         // Toggle for the module.
-        $('#noticesModuleToggle').on('change', function() {
+        $('#noticesModuleToggle').on('change', function () {
             // Enable the module then query the data.
             socket.sendCommandSync('notices_module_toggle_cmd', 'module ' + ($(this).is(':checked') ? 'enablesilent' : 'disablesilent') + ' ./systems/noticeSystem.js', run);
         });
 
         // On add group button.
-        $("#btn-add-group").on('click', function() {
-            openGroupModal(null, function(result) {
+        $("#btn-add-group").on('click', function () {
+            openGroupModal(null, function (result) {
                 socket.wsEvent('timer_group_appended_ws', './systems/noticeSystem.js', null,
-                    ['appendGroup', JSON.stringify({
-                        name: result.groupName,
-                        noticeToggle: result.noticeToggle,
-                        noticeOfflineToggle: result.noticeOfflineToggle,
-                        intervalMin: result.noticeIntervalMin,
-                        intervalMax: result.noticeIntervalMax,
-                        reqMessages: result.noticeReqMsg,
-                        shuffle: result.groupShuffle,
-                        messages: []
-                    })], function() {
-                        // Close the modal.
-                        $('#add-group-modal').modal('hide');
-                        // Alert the user.
-                        toastr.success('Successfully added the timer group!');
-                        selected = -1;
-                        // Reload the table.
-                        run();
-                    }
-                );
+                        ['appendGroup', JSON.stringify({
+                                name: result.groupName,
+                                noticeToggle: result.noticeToggle,
+                                noticeOfflineToggle: result.noticeOfflineToggle,
+                                intervalMin: result.noticeIntervalMin,
+                                intervalMax: result.noticeIntervalMax,
+                                reqMessages: result.noticeReqMsg,
+                                shuffle: result.groupShuffle,
+                                messages: []
+                            })], function () {
+                    // Close the modal.
+                    $('#add-group-modal').modal('hide');
+                    // Alert the user.
+                    toastr.success('Successfully added the timer group!');
+                    selected = -1;
+                    // Reload the table.
+                    run();
+                });
             });
         });
     });

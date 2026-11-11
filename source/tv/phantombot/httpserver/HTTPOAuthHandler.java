@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,22 +16,27 @@
  */
 package tv.phantombot.httpserver;
 
-import com.gmt2001.TwitchAuthorizationCodeFlow;
+import com.gmt2001.PathValidator;
 import com.gmt2001.httpwsserver.HttpRequestHandler;
 import com.gmt2001.httpwsserver.HttpServerPageHandler;
 import com.gmt2001.httpwsserver.auth.HttpAuthenticationHandler;
 import com.gmt2001.httpwsserver.auth.HttpBasicAuthenticationHandler;
 import com.gmt2001.httpwsserver.auth.HttpNoAuthenticationHandler;
+import com.gmt2001.security.Digest;
+import com.gmt2001.twitch.TwitchAuthorizationCodeFlow;
+
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.QueryStringDecoder;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.SecureRandom;
+import java.util.Objects;
+
+import tv.phantombot.CaselessProperties;
 import tv.phantombot.PhantomBot;
 
 /**
@@ -40,22 +45,28 @@ import tv.phantombot.PhantomBot;
  */
 public class HTTPOAuthHandler implements HttpRequestHandler {
 
-    private final HttpAuthenticationHandler authHandler;
-    private static final String TOKENCHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890";
+    private HttpAuthenticationHandler authHandler;
     private static final int TOKENLEN = 40;
     private HttpAuthenticationHandler authHandlerBroadcaster;
     private String token;
 
-    public HTTPOAuthHandler(String panelUser, String panelPass) {
-        authHandler = new HttpBasicAuthenticationHandler("PhantomBot Web OAuth", panelUser, panelPass, "/panel/login/");
-        token = generateToken();
-        authHandlerBroadcaster = new HttpBasicAuthenticationHandler("PhantomBot Web OAuth", "broadcaster", token, "/panel/login/");
+    public HTTPOAuthHandler() {
+        this.authHandler = new HttpBasicAuthenticationHandler("PhantomBot Web OAuth", CaselessProperties.instance().getProperty("paneluser", "panel"),
+                CaselessProperties.instance().getProperty("panelpassword", "panel"), "/panel/login/");
+        String token = PhantomBot.generateRandomString(TOKENLEN);
+        this.authHandlerBroadcaster = new HttpBasicAuthenticationHandler("PhantomBot Web OAuth", "broadcaster", token, "/panel/login/");
+        this.token = Digest.sha256(token);
     }
 
     @Override
     public HttpRequestHandler register() {
         HttpServerPageHandler.registerHttpHandler("/oauth", this);
         return this;
+    }
+
+    public void updateAuth() {
+        this.authHandler = new HttpBasicAuthenticationHandler("PhantomBot Web OAuth", CaselessProperties.instance().getProperty("paneluser", "panel"),
+                CaselessProperties.instance().getProperty("panelpassword", "panel"), "/panel/login/");
     }
 
     @Override
@@ -65,35 +76,42 @@ public class HTTPOAuthHandler implements HttpRequestHandler {
 
     @Override
     public void handleRequest(ChannelHandlerContext ctx, FullHttpRequest req) {
+        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
+
         if (req.uri().startsWith("/oauth/broadcaster")) {
-            if (!authHandlerBroadcaster.checkAuthorization(ctx, req)) {
+            if (!this.authHandlerBroadcaster.checkAuthorization(ctx, req)) {
                 return;
             }
         } else {
-            if (!authHandler.checkAuthorization(ctx, req)) {
+            if (!PhantomBot.instance().getHTTPSetupHandler().checkTokenAuthorization(ctx, req) && !this.authHandler.checkAuthorization(ctx, req)) {
                 return;
             }
         }
 
-        QueryStringDecoder qsd = new QueryStringDecoder(req.uri());
+        if (!req.method().equals(HttpMethod.GET) && !req.method().equals(HttpMethod.PUT) && !req.method().equals(HttpMethod.POST)) {
+            com.gmt2001.Console.debug.println("405 " + req.method().asciiName() + ": " + qsd.path());
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.METHOD_NOT_ALLOWED));
+            return;
+        }
 
         try {
-            String path = qsd.path();
-
-            if (path.startsWith("/oauth")) {
-                path = "/oauth";
-            }
+            String path = qsd.path().replace("/broadcaster", "");
 
             Path p = Paths.get("./web/", path);
 
-            if (path.endsWith("/") || Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) {
+            if (path.startsWith("/oauth") && Files.notExists(p)) {
+                path = "/oauth";
+                p = Paths.get("./web/", path);
+            }
+
+            if (path.endsWith("/") || Files.isDirectory(p)) {
                 path = path + "/index.html";
                 p = Paths.get("./web/", path);
             }
 
-            if (!p.toAbsolutePath().startsWith(Paths.get(PhantomBot.GetExecutionPath(), "./web"))) {
+            if (!PathValidator.isValidPathWebAuth(p.toString()) || !PathValidator.isPathUnderExecutionOrDockerWeb(p.toAbsolutePath().normalize())) {
                 com.gmt2001.Console.debug.println("403 " + req.method().asciiName() + ": " + p.toString());
-                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN, null, null));
+                HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.FORBIDDEN));
                 return;
             }
 
@@ -107,33 +125,40 @@ public class HTTPOAuthHandler implements HttpRequestHandler {
                 HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.OK, data, p.getFileName().toString()));
             }
         } catch (IOException ex) {
-            com.gmt2001.Console.debug.println("500");
+            com.gmt2001.Console.debug.println("500 " + req.method().asciiName() + ": " + qsd.path());
             com.gmt2001.Console.debug.printStackTrace(ex);
-            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR, null, null));
+            HttpServerPageHandler.sendHttpResponse(ctx, req, HttpServerPageHandler.prepareHttpResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR));
         }
     }
 
     public String changeBroadcasterToken() {
-        token = generateToken();
-        authHandlerBroadcaster = new HttpBasicAuthenticationHandler("PhantomBot Web OAuth", "broadcaster", token, "/panel/login");
+        String token = PhantomBot.generateRandomString(TOKENLEN);
+        this.authHandlerBroadcaster = new HttpBasicAuthenticationHandler("PhantomBot Web OAuth", "broadcaster", token, "/panel/login");
+        this.token = Digest.sha256(token);
         return token;
-    }
-
-    private String generateToken() {
-        String ret = "";
-
-        SecureRandom r = new SecureRandom();
-
-        while (ret.length() < TOKENLEN) {
-            int val = r.nextInt(TOKENCHARS.length());
-            ret += TOKENCHARS.charAt(val);
-        }
-
-        return ret;
     }
 
     public boolean validateBroadcasterToken(String token) {
         return this.token.equals(token);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(authHandler, authHandlerBroadcaster, token);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        HTTPOAuthHandler other = (HTTPOAuthHandler) obj;
+        return Objects.equals(authHandler, other.authHandler)
+                && Objects.equals(authHandlerBroadcaster, other.authHandlerBroadcaster)
+                && Objects.equals(token, other.token);
     }
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,11 +19,15 @@ package com.gmt2001.httpwsserver;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.socket.SocketChannel;
+import io.netty.handler.codec.http.HttpContentCompressor;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
+import io.netty.handler.codec.http.websocketx.WebSocketFrameAggregator;
 import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 import io.netty.handler.codec.http.websocketx.extensions.compression.WebSocketServerCompressionHandler;
 import io.netty.handler.ssl.SslContext;
+import io.netty.handler.stream.ChunkedWriteHandler;
+import tv.phantombot.CaselessProperties;
 
 /**
  * Initializes {@link SocketChannel} objects for a {@link HTTPWSServer}
@@ -32,6 +36,12 @@ import io.netty.handler.ssl.SslContext;
  */
 class HTTPWSServerInitializer extends ChannelInitializer<SocketChannel> {
 
+    /**
+     * How large of websocket frames we expect
+     * (64KB)
+     */
+    public static final int MAX_WS_FRAME_SIZE = 64*1024;
+    
     /**
      * Constructor
      */
@@ -52,12 +62,23 @@ class HTTPWSServerInitializer extends ChannelInitializer<SocketChannel> {
         SslContext sslCtx = HTTPWSServer.instance().getSslContext();
         if (sslCtx != null) {
             pipeline.addLast("sslhandler", new HttpOptionalSslHandler(sslCtx));
+            pipeline.addLast(new CatchSslExceptionHandler());
         }
 
         pipeline.addLast(new HttpServerCodec());
         pipeline.addLast(new HttpObjectAggregator(65536));
-        pipeline.addLast(new WebSocketServerCompressionHandler());
+        /**
+         * @botproperty httpwsserverdebug - If `true`, requests at the webserver are logged in `./logs/request`. default `false`
+         * @botpropertycatsort httpwsserverdebug 1100 900 Debug
+         */
+        if (CaselessProperties.instance().getPropertyAsBoolean("httpwsserverdebug", false)) {
+            pipeline.addLast(new RequestLogger());
+        }
+        pipeline.addLast(new WebSocketFrameAggregator(MAX_WS_FRAME_SIZE));
+        pipeline.addLast(new WebSocketServerCompressionHandler(4*MAX_WS_FRAME_SIZE));
         pipeline.addLast(new WebSocketServerProtocolHandler("/ws", null, true, 65536, false, true));
+        pipeline.addLast(new HttpContentCompressor());
+        pipeline.addLast(new ChunkedWriteHandler());   
         pipeline.addLast("pagehandler", new HttpServerPageHandler());
         pipeline.addLast("wshandler", new WebSocketFrameHandler());
     }

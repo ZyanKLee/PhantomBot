@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+/* global toastr, swal */
 
 $(function () {
     const helpers = {};
@@ -31,13 +33,18 @@ $(function () {
     helpers.DEBUG_STATE = (localStorage.getItem('phantombot_debug_state') !== null ? parseInt(localStorage.getItem('phantombot_debug_state')) : helpers.DEBUG_STATES.NONE);
     // Debug types.
     helpers.LOG_TYPE = helpers.DEBUG_STATES;
-    // Panel version. SEE: https://semver.org/
-    // Example: MAJOR.MINOR.PATCH
-    helpers.PANEL_VERSION = "NONE";
 
-    helpers.hashmap = [];
+    helpers.querymap = {};
+    helpers.hashmap = {};
+    helpers.version = {};
 
-    /*
+    helpers.getBotVersion = function () {
+        socket.getBotVersion('helpers_version', function (e) {
+            helpers.version = structuredClone(e);
+        });
+    };
+
+    /**
      * @function adds commas to thousands.
      *
      * @param  {String} number
@@ -69,7 +76,7 @@ $(function () {
         return number;
     };
 
-    /*
+    /**
      * @function checks if the object has a valid string or number.
      *
      * @param  {Object} obj
@@ -90,7 +97,7 @@ $(function () {
         return false;
     };
 
-    /*
+    /**
      * @function Checks if the value is null and returns the default if it is.
      *
      * @param  {String} value
@@ -105,7 +112,7 @@ $(function () {
         }
     };
 
-    /*
+    /**
      * @function gets the proper event message.
      *
      * @param  {Object} event
@@ -125,7 +132,7 @@ $(function () {
                 return (event.username + ' just followed!');
             case 'bits':
                 return (event.username + ' just cheered ' + event.amount + ' bits!');
-            case 'host':
+            case 'host': //@deprecated
                 return (event.username + ' just hosted with ' + event.viewers + ' viewers!');
             case 'tip':
                 return (event.username + ' just tipped ' + event.amount + ' ' + event.currency + '!');
@@ -142,7 +149,7 @@ $(function () {
         }
     };
 
-    /*
+    /**
      * @function that gets the right color for an event.
      *
      * @param  {String} event
@@ -163,7 +170,7 @@ $(function () {
                 return 'background-color: #c62828;';
             case 'bits':
                 return 'background-color: #6441a5;';
-            case 'host':
+            case 'host': //@deprecated
                 return 'background-color: #ed4c1c;';
             case 'tip':
                 return 'background-color: #846195;';
@@ -180,7 +187,7 @@ $(function () {
         }
     };
 
-    /*
+    /**
      * @function handle input validation
      *
      * @param {Object} obj
@@ -189,8 +196,11 @@ $(function () {
      *
      * Validator takes obj as argument should return null if the input is valid or else an error message.
      */
-    helpers.handleInput = function (obj, validator) {
+    helpers.handleInput = function (obj, validator, allowNull) {
         if (obj.length === 0) {
+            if (allowNull === true) {
+                return true;
+            }
             helpers.logError('Failed to validate input due to the object being null.', helpers.LOG_TYPE.FORCE);
             return;
         }
@@ -230,22 +240,31 @@ $(function () {
         return !obj.parent().hasClass('has-error');
     };
 
-    /*
+    /**
      * @function handles the string input checks.
      *
      * @param {Object} obj
      * @return {Boolean}
      */
-    helpers.handleInputString = function(obj) {
+    helpers.handleInputString = function (obj, min, max) {
+        if (min === undefined) {
+            min = 1;
+        }
+        if (max === undefined) {
+            max = Number.MAX_SAFE_INTEGER;
+        }
         return helpers.handleInput(obj, function (obj) {
-            if (obj.val().length < 1) {
-                return 'You cannot leave this field empty.';
+            if (obj.val().length < min) {
+                return 'You cannot have less than ' + min + ' characters.';
+            }
+            if (obj.val().length > max) {
+                return 'You cannot have more than ' + max + ' characters.';
             }
             return null;
         });
     };
 
-    /*
+    /**
      * @function handles the number input checks.
      *
      * @param  {Object} obj
@@ -263,7 +282,7 @@ $(function () {
         });
     };
 
-    /*
+    /**
      * @function handles the date input checks.
      *
      * @param  {Object} obj
@@ -273,14 +292,14 @@ $(function () {
         return helpers.handleInput(obj, function (obj) {
             let matched = obj.val().match(/^((\d{2}|\d{4})(\\|\/|\.|-)(\d{2})(\\|\/|\.|-)(\d{4}|\d{2}))$/);
 
-            if (matched === null || ((matched[6].length < 4 && matched[2].length == 2) || (matched[6].length == 2 && matched[2].length < 4))) {
+            if (matched === null || ((matched[6].length < 4 && matched[2].length === 2) || (matched[6].length === 2 && matched[2].length < 4))) {
                 return 'Please enter a valid date (mm/dd/yyyy or dd/mm/yyyy).';
             }
             return null;
         });
     };
 
-    /*
+    /**
      * @function handles hiding info for the panels (the four dashboard info panels).
      *
      * @param {Object} obj
@@ -290,10 +309,14 @@ $(function () {
         id = 'phantombot_' + id.substring(id.indexOf('-') + 1);
 
         if (localStorage.getItem(id) === 'false') {
-            if (parseInt(obj.data('number').replace(/,/g, '')) < 9999) {
-                obj.html(obj.data('number'));
+            let numval = obj.data('number');
+            if (numval === undefined || numval === null || numval.trim().length === 0) {
+                numval = '0';
+            }
+            if (parseInt(numval.replace(/,/g, '')) < 9999) {
+                obj.html(numval);
             } else {
-                obj.html($('.small-box').width() < 230 ? obj.data('parsed') : obj.data('number'));
+                obj.html($('.small-box').width() < 230 ? obj.data('parsed') : numval);
             }
             localStorage.setItem(id, 'true');
         } else {
@@ -302,7 +325,7 @@ $(function () {
         }
     };
 
-    /*
+    /**
      * @function handles setting the info for the panels (the four dashboard info panels).
      *
      * @param {Object} obj
@@ -312,19 +335,24 @@ $(function () {
         let item = localStorage.getItem('phantombot_' + id.substring(id.indexOf('-') + 1)),
                 isSmall = $('.small-box').width() < 230;
 
-        if (item === 'true' || item === null) {
-            if (parseInt(obj.data('number').replace(/,/g, '')) < 9999) {
-                obj.html(obj.data('number'));
+        if (helpers.isTrue(item) || item === null) {
+            let numval = obj.data('number');
+            if (numval === undefined || numval === null || numval.trim().length === 0) {
+                numval = '0';
+            }
+            if (parseInt(numval.replace(/,/g, '')) < 9999) {
+                obj.html(numval);
             } else {
-                obj.html(isSmall ? parsed : obj.data('number'));
+                obj.html(isSmall ? parsed : numval);
             }
         } else {
             obj.html('Hidden');
         }
+
         obj.data('parsed', parsed);
     };
 
-    /*
+    /**
      * @function Adds padding to the date with a 0.
      *
      * @param  {String} dateString
@@ -342,18 +370,76 @@ $(function () {
         return dateMatches.join('');
     };
 
-    /*
+    /**
      * @function Generates a basic modal, you have to append your own body with jQuery.
      *
-     * @param  {String}   id
-     * @param  {String}   title
-     * @param  {String}   btn
-     * @param  {Object}   body
-     * @param  {Function} onClose
-     * @return {Object}
+     * @param  {String}        id - Element ID for the modal
+     * @param  {String}        title - Dialog title
+     * @param  {String}        btn - The text displayed on the priamry button, typically "Save". Use `null` to remove
+     * @param  {jQuery Object} body - HTML for the modal body
+     * @param  {Function}      onClose - Executes when `btn` is pressed. Does nothing if `btn` is `null`
+     * @param  {JS Object}     override - optionally overrides some options of the dialog
+     * {
+     *      footerpre: [],                 // Array of additional HTML elements for the footer, appended before the `btn` button
+     *      footercenter: [],              // Array of additional HTML elements for the footer, appended in between the `btn` button and the "Cancel" button
+     *      footerpost: [],                // Array of additional HTML elements for the footer, appended after the "Cancel" button
+     *      cancelclass: 'primary',        // Overrides the `btn-default` class on the "Cancel" button. Can be used to add other classes as well
+     *      canceltext: 'Close',           // Overrides the text displayed on the "Cancel" button
+     *      cancelclick: function(){},     // Overrides the function triggered on click for the "Cancel" button. Default `undefined`
+     *      blockClosing: boolean          // Overrides all methods to close the dialog other than using the buttons
+     *      removecancel: boolean          // Removes the "Cancel" button from the dialog
+     * }
+     * @return {jQuery Object} A modal which is ready to be shown using `.modal('show')`
      */
-    helpers.getModal = function (id, title, btn, body, onClose) {
-        return $('<div/>', {
+    helpers.getModal = function (id, title, btn, body, onClose, override) {
+        if (override === undefined || override === null) {
+            override = {};
+        }
+
+        let footerbuttons = [];
+
+        if (override.hasOwnProperty('footerpre') && override.footerpre.length > 0) {
+            footerbuttons.push(...override.footerpre);
+        }
+
+        if (btn !== undefined && btn !== null) {
+            footerbuttons.push($('<button/>', {
+                'class': 'btn btn-primary',
+                'type': 'button',
+                'text': btn,
+                'click': onClose
+            }));
+        }
+
+        if (override.hasOwnProperty('footercenter') && override.footercenter.length > 0) {
+            footerbuttons.push(...override.footercenter);
+        }
+
+        if (!override.hasOwnProperty('removecancel') || (override.hasOwnProperty('removecancel') && !override.removecancel)) {
+            footerbuttons.push($('<button/>', {
+                'class': 'btn ' + (override.hasOwnProperty('cancelclass') ? override.cancelclass : 'btn-default'),
+                'type': 'button',
+                'text': (override.hasOwnProperty('canceltext') ? override.canceltext : 'Cancel'),
+                'data-dismiss': 'modal',
+                'click': (override.hasOwnProperty('cancelclick') ? override.cancelclick : undefined)
+            }));
+        }
+
+        if (override.hasOwnProperty('footerpost') && override.footerpost.length > 0) {
+            footerbuttons.push(...override.footerpost);
+        }
+
+        let closeButton;
+        if(!(override.hasOwnProperty('blockClosing') && override.blockClosing)) {
+            closeButton = $('<button/>', {
+                'type': 'button',
+                'class': 'close',
+                'data-dismiss': 'modal',
+                'html': '&times;'
+            });
+        }
+
+        return  $('<div/>', {
             'class': 'modal fade',
             'tabindex': '99',
             'id': id
@@ -363,12 +449,7 @@ $(function () {
             'class': 'modal-content'
         }).append($('<div/>', {
             'class': 'modal-header'
-        }).append($('<button/>', {
-            'type': 'button',
-            'class': 'close',
-            'data-dismiss': 'modal',
-            'html': '&times;'
-        })).append($('<h4/>', {
+        }).append(closeButton).append($('<h4/>', {
             'class': 'modal-title',
             'text': title
         }))).append($('<div/>', {
@@ -376,34 +457,80 @@ $(function () {
             'html': body
         })).append($('<div/>', {
             'class': 'modal-footer'
-        }).append($('<button/>', {
-            'class': 'btn btn-primary',
-            'type': 'button',
-            'text': btn,
-            'click': onClose
-        })).append($('<button/>', {
-            'class': 'btn btn-default',
-            'type': 'button',
-            'text': 'Cancel',
-            'data-dismiss': 'modal'
-        }))))).on('shown.bs.modal', function () {
+        }).append(footerbuttons)))).on('shown.bs.modal', function () {
             $('#' + id).focus();
         }).on('hidden.bs.modal', function () {
             $('#' + id).remove();
         });
     };
 
-    /*
-     * @function Generates an advance modal, you have to append your own body with jQuery.
+    /**
+     * @function Generates an advanced modal, you have to append your own body with jQuery.
      *
-     * @param  {String}   id
-     * @param  {String}   title
-     * @param  {String}   btn
-     * @param  {Object}   body
-     * @param  {Function} onClose
-     * @return {Object}
+     * Elements which should be hidden behind the "Show Advanced" collapse section should be enclosed in an element defined as
+     * $('<div/>', {
+     *    'class': 'collapse',
+     *    'id': 'advance-collapse',
+     *    'html': $('<form/>', {
+     *    'role': 'form'
+     *    })
+     *    // jQuery .append() elements here
+     * })
+     *
+     * @param  {String}        id - Element ID for the modal
+     * @param  {String}        title - Dialog title
+     * @param  {String}        btn - The text displayed on the priamry button, typically "Save". Use `null` to remove
+     * @param  {jQuery Object} body - HTML for the modal body
+     * @param  {Function}      onClose - Executes when `btn` is pressed. Does nothing if `btn` is `null`
+     * @param  {JS Object}     override - optionally overrides some options of the dialog
+     * {
+     *      footerpre: [],                 // Array of additional HTML elements for the footer, appended before the `btn` button
+     *      footercenter: [],              // Array of additional HTML elements for the footer, appended in between the `btn` button and the "Cancel" button
+     *      footerpost: [],                // Array of additional HTML elements for the footer, appended after the "Cancel" button
+     *      cancelclass: 'primary',        // Overrides the `btn-default` class on the "Cancel" button. Can be used to add other classes as well
+     *      canceltext: 'Close',           // Overrides the text displayed on the "Cancel" button
+     *      cancelclick: function(){},     // Overrides the function triggered on click for the "Cancel" button. Default `undefined`
+     *      advancedshowtext: 'Show More', // Overrides the "Show Advanced" text
+     *      advancedhidetext: 'Hide More'  // Overrides the "Hide Advanced" text
+     * }
+     * @return {jQuery Object} A modal which is ready to be shown using `.modal('show')`
      */
-    helpers.getAdvanceModal = function (id, title, btn, body, onClose) {
+    helpers.getAdvanceModal = function (id, title, btn, body, onClose, override) {
+        if (override === undefined || override === null) {
+            override = {};
+        }
+
+        let footerbuttons = [];
+
+        if (override.hasOwnProperty('footerpre') && override.footerpre.length > 0) {
+            footerbuttons.push(...override.footerpre);
+        }
+
+        if (btn !== undefined && btn !== null) {
+            footerbuttons.push($('<button/>', {
+                'class': 'btn btn-primary',
+                'type': 'button',
+                'text': btn,
+                'click': onClose
+            }));
+        }
+
+        if (override.hasOwnProperty('footercenter') && override.footercenter.length > 0) {
+            footerbuttons.push(...override.footercenter);
+        }
+
+        footerbuttons.push($('<button/>', {
+            'class': 'btn btn-' + (override.hasOwnProperty('cancelclass') ? override.cancelclass : 'default'),
+            'type': 'button',
+            'text': (override.hasOwnProperty('canceltext') ? override.canceltext : 'Cancel'),
+            'data-dismiss': 'modal',
+            'click': (override.hasOwnProperty('cancelclick') ? override.cancelclick : null)
+        }));
+
+        if (override.hasOwnProperty('footerpost') && override.footerpost.length > 0) {
+            footerbuttons.push(...override.footerpost);
+        }
+
         return $('<div/>', {
             'class': 'modal fade',
             'tabindex': '99',
@@ -438,31 +565,23 @@ $(function () {
             })
         }).append($('<span/>', {
             'class': 'collapse-btn',
-            'html': 'Show Advanced'
-        }))).append($('<button/>', {
-            'class': 'btn btn-primary',
-            'type': 'button',
-            'text': btn,
-            'click': onClose
-        })).append($('<button/>', {
-            'class': 'btn btn-default',
-            'type': 'button',
-            'text': 'Cancel',
-            'data-dismiss': 'modal'
-        }))))).on('shown.bs.modal', function () {
+            'html': (override.hasOwnProperty('advancedshowtext') ? override.advancedshowtext : 'Show Advanced'),
+            'data-showtext': (override.hasOwnProperty('advancedshowtext') ? override.advancedshowtext : 'Show Advanced'),
+            'data-hidetext': (override.hasOwnProperty('advancedhidetext') ? override.advancedhidetext : 'Hide Advanced')
+        }))).append(footerbuttons)))).on('shown.bs.modal', function () {
             $('#' + id).focus();
         }).on('hidden.bs.modal', function () {
             $('#' + id).remove();
         }).on('show.bs.collapse', function () {
             $(this).find('.glyphicon').removeClass('glyphicon-chevron-down').addClass('glyphicon-chevron-up');
-            $(this).find('.collapse-btn').html('Hide Advanced');
+            $(this).find('.collapse-btn').html($(this).find('.collapse-btn').data('hidetext'));
         }).on('hide.bs.collapse', function () {
             $(this).find('.glyphicon').removeClass('glyphicon-chevron-up').addClass('glyphicon-chevron-down');
-            $(this).find('.collapse-btn').html('Show Advanced');
+            $(this).find('.collapse-btn').html($(this).find('.collapse-btn').data('showtext'));
         });
     };
 
-    /*
+    /**
      * @function Generates an input group
      *
      * @param  {String}  id
@@ -494,7 +613,7 @@ $(function () {
         }).prop('disabled', (disabled === undefined ? false : disabled)));
     };
 
-    /*
+    /**
      * @function Generates a textarea group
      *
      * @param  {String}  id
@@ -528,7 +647,7 @@ $(function () {
         }));
     };
 
-    /*
+    /**
      * @function Generates a dropdown.
      *
      * @param  {String} id
@@ -561,9 +680,28 @@ $(function () {
             'disabled': 'true',
             'hidden': 'true'
         })).append(options.map(function (option) {
-            return $('<option/>', {
-                'html': option
-            });
+            let o = $('<option/>');
+
+            if (typeof (option) === 'object') {
+                o.html(option.name);
+                o.attr('id', option._id);
+
+                if (option.value !== undefined) {
+                    o.attr('value', option.value);
+                }
+
+                if (option.selected !== undefined && (option.selected === true || helpers.isTrue(option.selected))) {
+                    o.attr('selected', 'selected');
+                }
+
+                if (option.disabled !== undefined && (option.disabled === true || helpers.isTrue(option.disabled))) {
+                    o.attr('disabled', 'disabled');
+                }
+            } else {
+                o.html(option);
+            }
+
+            return o;
         }))));
     };
 
@@ -599,13 +737,13 @@ $(function () {
                     o.attr('value', roles[i].value);
                 }
 
-                if (roles[i].selected !== undefined && roles[i].selected === true) {
+                if (roles[i].selected !== undefined && (roles[i].selected === true || helpers.isTrue(roles[i].selected))) {
                     o.attr('selected', 'selected');
                 } else if (selected !== undefined && selected.indexOf(roles[i]._id) > -1) {
                     o.attr('selected', 'selected');
                 }
 
-                if (roles[i].disabled !== undefined && roles[i].disabled === true) {
+                if (roles[i].disabled !== undefined && (roles[i].disabled === true || helpers.isTrue(roles[i].disabled))) {
                     o.attr('disabled', 'disabled');
                 }
 
@@ -616,7 +754,7 @@ $(function () {
         }))));
     };
 
-    /*
+    /**
      * @function Generates a multi-select dropdown.
      *
      * @param  {String} id
@@ -666,10 +804,18 @@ $(function () {
                     'id': roles[i]._id
                 });
 
-                if (roles[i].selected !== undefined && roles[i].selected === 'true') {
+                if (roles[i].value !== undefined) {
+                    o.attr('value', roles[i].value);
+                }
+
+                if (roles[i].selected !== undefined && (roles[i].selected === true || helpers.isTrue(roles[i].selected))) {
                     o.attr('selected', 'selected');
                 } else if (selected !== undefined && selected.indexOf(roles[i]._id) > -1) {
                     o.attr('selected', 'selected');
+                }
+
+                if (roles[i].disabled !== undefined && (roles[i].disabled === true || helpers.isTrue(roles[i].disabled))) {
+                    o.attr('disabled', 'disabled');
                 }
 
                 group.append(o);
@@ -679,7 +825,7 @@ $(function () {
         }))));
     };
 
-    /*
+    /**
      * @function Generates a multi-select dropdown.
      *
      * @param  {String} id
@@ -715,14 +861,24 @@ $(function () {
                 'html': option.name,
                 'id': option._id
             });
-            if (option.selected !== undefined && option.selected === 'true') {
+
+            if (option.value !== undefined) {
+                o.attr('value', option.value);
+            }
+
+            if (option.selected !== undefined && (option.selected === true || helpers.isTrue(option.selected))) {
                 o.attr('selected', 'selected');
             }
+
+            if (option.disabled !== undefined && (option.disabled === true || helpers.isTrue(option.disabled))) {
+                o.attr('disabled', 'disabled');
+            }
+
             return o;
         }))));
     };
 
-    /*
+    /**
      * @function gets a checkbox
      *
      * @param  {String}  id
@@ -764,7 +920,7 @@ $(function () {
         // }).prop('checked', value)).append(text));
     };
 
-    /*
+    /**
      * @function gets a collapsible accordion panel.
      *
      * @param  {String} id
@@ -795,7 +951,7 @@ $(function () {
         })));
     };
 
-    /*
+    /**
      * @function gets the confrim delete modal
      *
      * @param  {String}   id
@@ -803,9 +959,18 @@ $(function () {
      * @param  {Boolean}  hasBodyMsg
      * @param  {String}   closeMessage
      * @param  {Function} onClose
+     * @param  {JS Object}     override - optionally overrides some options of the dialog
+     * {
+     *      deleteText: 'Delete',   // Overrides the text displayed on the "Delete" button
+     *      blockClosing: boolean   // Overrides all methods to close the dialog other than using the confirm button
+     * }
      * @return {Object}
      */
-    helpers.getConfirmDeleteModal = function (id, title, hasBodyMsg, closeMessage, onClose) {
+    helpers.getConfirmDeleteModal = function (id, title, hasBodyMsg, closeMessage, onClose, override) {
+        if (override === undefined || override === null) {
+            override = {};
+        }
+
         swal({
             'title': title,
             'text': (hasBodyMsg ? 'Once removed, it be will gone forever.' : ''),
@@ -813,26 +978,228 @@ $(function () {
             'reverseButtons': true,
             'buttons': {
                 'confirm': {
-                    'text': 'Delete',
+                    'text': (override.hasOwnProperty('deleteText') ? override.deleteText : 'Delete'),
                     'visible': true
                 },
                 'cancel': {
                     'text': 'Cancel',
-                    'visible': true
+                    'visible': (override.hasOwnProperty('blockClosing') ? !override.blockClosing : true)
                 }
             },
-            'dangerMode': true
+            'dangerMode': true,
+            'closeOnClickOutside': (override.hasOwnProperty('blockClosing') ? !override.blockClosing : true),
+            'closeOnEsc': (override.hasOwnProperty('blockClosing') ? !override.blockClosing : true)
         }).then(function (isRemoved) {
             if (isRemoved) {
-                onClose();
-                swal(closeMessage, {
-                    'icon': 'success'
-                });
+                let result = onClose();
+                if (result === undefined || result.message === undefined || result.icon === undefined) {
+                    swal(closeMessage, {
+                        'icon': 'success'
+                    });
+                } else {
+                    swal(result.message, {
+                        'icon': result.icon
+                    });
+                }
             }
         });
     };
 
-    /*
+    /**
+     * @function Opens the dialog that lists, saves, and removes the secrets used by the (api) command tag
+     */
+    helpers.openApiSecretsModal = function () {
+        // The panel cannot read the apiSecrets table, so the names are kept in a table of their own.
+        socket.getDBTableValues('api_secret_names', 'apiSecretNames', function (results) {
+            let secretList = $('<div/>', {
+                'class': 'form-group'
+            }).append($('<label/>', {
+                'html': $('<b/>', {
+                    'text': 'Saved Secrets'
+                })
+            }));
+
+            if (results.length === 0) {
+                secretList.append($('<p/>', {
+                    'text': 'No secrets have been saved.'
+                }));
+            } else {
+                secretList.append($('<div/>', {
+                    'class': 'input-group'
+                }).append($('<select/>', {
+                    'class': 'form-control',
+                    'id': 'secret-saved',
+                    'style': 'cursor: pointer;'
+                }).append(results.map(function (result) {
+                    return $('<option/>', {
+                        'value': result.key,
+                        'text': '$secret.' + result.key
+                    });
+                }))).append($('<span/>', {
+                    'class': 'input-group-btn',
+                    'html': $('<button/>', {
+                        'type': 'button',
+                        'class': 'btn btn-danger btn-flat',
+                        'html': 'Remove',
+                        'click': function () {
+                            let secret = $('#secret-saved').val();
+
+                            // Close the modal.
+                            $('#api-secret').modal('hide');
+                            // Ask the user if they want to remove the secret.
+                            helpers.getConfirmDeleteModal('api_secret_modal_remove', 'Are you sure you want to remove API secret ' + secret + '?', true,
+                                    'The API secret ' + secret + ' has been successfully removed!', function () {
+                                        socket.removeDBValues('api_secret_remove', {
+                                            tables: ['apiSecrets', 'apiSecretNames'],
+                                            keys: [secret, secret]
+                                        }, function () {});
+                                    });
+                        }
+                    })
+                })));
+            }
+
+            // Get modal from our util functions in /utils/helpers.js
+            helpers.getModal('api-secret', 'API Secrets', 'Save', $('<form/>', {
+                'role': 'form'
+            })
+                    .append($('<div/>', {
+                        'class': 'form-group',
+                        'html': 'This dialog stores secrets, such as API keys, to be used in an (api) command tag as $secret.name\n\
+                        <br /> A saved secret cannot be viewed again. Saving with an existing name replaces it.\n\
+                        <br /> NOTE: Anyone who can add or edit commands can use any saved secret.'
+                    }))
+                    // Append the list of saved secrets.
+                    .append(secretList)
+                    // Append input box for the secret name.
+                    .append(helpers.getInputGroup('secret-name', 'text', 'Name', 'shop', '', 'Name of the secret. Letters, numbers, and underscores only.'))
+                    // Append input box for the secret value.
+                    .append(helpers.getInputGroup('secret-value', 'password', 'Value', '', '', 'Value of the secret.')), function () {
+                let secretName = $('#secret-name'),
+                        secretValue = $('#secret-value');
+
+                // The (api) tag looks up secrets by their lowercase name.
+                secretName.val(secretName.val().trim().toLowerCase());
+                secretValue.val(secretValue.val().trim());
+
+                // Handle each input to make sure they have a value.
+                switch (false) {
+                    case helpers.handleInput(secretName, function (obj) {
+                        return obj.val().match(/^\w+$/) === null ? 'Only letters, numbers, and underscores are allowed.' : null;
+                    }):
+                    case helpers.handleInputString(secretValue):
+                        break;
+                    default:
+                        socket.updateDBValues('api_secret_update', {
+                            tables: ['apiSecrets', 'apiSecretNames'],
+                            keys: [secretName.val(), secretName.val()],
+                            values: [secretValue.val(), 'true']
+                        }, function () {
+                            // Close the modal.
+                            $('#api-secret').modal('hide');
+                            // Tell the user the secret was saved.
+                            toastr.success('Successfully saved API secret ' + secretName.val());
+                        });
+                }
+            }).modal('toggle');
+        });
+    };
+
+    /**
+     * @function Opens the dialog that ties a saved API secret to a custom command, so its (api) requests send it in a header
+     *
+     * @param {String} table apiCommandSecrets for a Twitch command, discordApiCommandSecrets for a Discord command
+     * @param {String} command the command, without the !
+     */
+    helpers.openApiSecretTieModal = function (table, command) {
+        socket.getDBTableValues('api_secret_tie_names', 'apiSecretNames', function (results) {
+            socket.getDBValue('api_secret_tie_get', table, command, function (e) {
+                let tie = (e[table] === null || e[table] === undefined ? {secret: '', header: 'Authorization'} : JSON.parse(e[table])),
+                        secretSelect = $('<select/>', {
+                            'class': 'form-control',
+                            'id': 'tie-secret',
+                            'style': 'cursor: pointer;'
+                        }).append(results.map(function (result) {
+                            return $('<option/>', {
+                                'value': result.key,
+                                'text': '$secret.' + result.key,
+                                'selected': result.key === tie.secret
+                            });
+                        }));
+
+                // A tied secret that was removed from the pool would otherwise show as the first one in the list
+                if (tie.secret !== '' && !results.some((result) => result.key === tie.secret)) {
+                    secretSelect.prepend($('<option/>', {
+                        'value': tie.secret,
+                        'text': '$secret.' + tie.secret + ' (not saved)',
+                        'selected': true
+                    }));
+                }
+
+                helpers.getModal('api-secret-tie', 'Add/Edit API Auth', 'Save', $('<form/>', {
+                    'role': 'form'
+                })
+                        .append($('<div/>', {
+                            'class': 'form-group',
+                            'html': 'The tied secret is sent with every (api) request of the command, so the command does not need to name it.\n\
+                            <br /> The Authorization header is sent as Bearer and the secret. Any other header is sent as the secret.\n\
+                            <br /> A header typed in the (api) tag replaces it.'
+                        }))
+                        .append(helpers.getInputGroup('tie-command', 'text', 'Command', '', '!' + command, 'Name of the command. This cannot be edited.', true))
+                        // Also shown with no saved secrets when the command is tied to one that was removed
+                        .append(secretSelect.children().length === 0 ? '' : $('<div/>', {
+                            'class': 'form-group'
+                        }).append($('<label/>', {
+                            'html': $('<b/>', {
+                                'text': 'Secret'
+                            })
+                        })).append(secretSelect))
+                        .append(results.length > 0 ? '' : $('<p/>', {
+                            'text': 'No secrets have been saved. Save one with the API Secrets button first.'
+                        }))
+                        .append(helpers.getInputGroup('tie-header', 'text', 'Header', 'Authorization', tie.header, 'Name of the header the secret is sent in.'))
+                        .append(tie.secret === '' ? '' : $('<button/>', {
+                            'type': 'button',
+                            'class': 'btn btn-danger btn-flat',
+                            'html': 'Remove API Auth',
+                            'click': function () {
+                                socket.removeDBValue('api_secret_tie_remove', table, command, function () {
+                                    // Close the modal.
+                                    $('#api-secret-tie').modal('hide');
+                                    // Tell the user the tie was removed.
+                                    toastr.success('The API secret is no longer sent with !' + command);
+                                });
+                            }
+                        })), function () {
+                    let tieHeader = $('#tie-header');
+
+                    tieHeader.val(tieHeader.val().trim());
+
+                    // Handle each input to make sure they have a value.
+                    switch (false) {
+                        case results.length > 0:
+                            break;
+                        case helpers.handleInput(tieHeader, function (obj) {
+                            return obj.val().match(/^[\w-]+$/) === null ? 'Only letters, numbers, underscores, and dashes are allowed.' : null;
+                        }):
+                            break;
+                        default:
+                            socket.updateDBValue('api_secret_tie_update', table, command, JSON.stringify({
+                                secret: secretSelect.val(),
+                                header: tieHeader.val()
+                            }), function () {
+                                // Close the modal.
+                                $('#api-secret-tie').modal('hide');
+                                // Tell the user the secret was tied.
+                                toastr.success('The API secret ' + secretSelect.val() + ' is now sent with !' + command);
+                            });
+                    }
+                }).modal('toggle');
+            });
+        });
+    };
+
+    /**
      * @function Generates a random string.
      *
      * @param  {Number} len
@@ -849,7 +1216,7 @@ $(function () {
         return str;
     };
 
-    /*
+    /**
      * @function Creates a new timer interval.
      *
      * @param {Function} func
@@ -859,7 +1226,7 @@ $(function () {
         timers.push(setInterval(func, interval));
     };
 
-    /*
+    /**
      * @function Creates a new timer timeout.
      *
      * @param {Function} func
@@ -869,7 +1236,7 @@ $(function () {
         timers.push(setTimeout(func, timeout));
     };
 
-    /*
+    /**
      * @function Clears all timers.
      */
     helpers.clearTimers = function () {
@@ -878,7 +1245,21 @@ $(function () {
         }
     };
 
-    /*
+    helpers.isTrue = function(val) {
+        if (val === undefined || val === null) {
+            return false;
+        }
+
+        try {
+            if (typeof val === 'string') {
+                val = val.trim().toLowerCase();
+            }
+        } catch (e) {}
+
+        return val === true || val === 1 || val === 'true' || val === '1' || val === 'yes';
+    }
+
+    /**
      * @function checked if a module is on.
      *
      * @param  {String}|{Array} id
@@ -887,7 +1268,7 @@ $(function () {
     helpers.getModuleStatus = function (id, toggle, swit) {
         if (typeof id === 'object') {
             for (let i = 0; i < id.length; i++) {
-                if (toggle === 'false') {
+                if (!helpers.isTrue(toggle)) {
                     //$('#' + id[i]).slideUp(helpers.DELAY_MS);
                     $('#' + id[i] + ' *').prop('disabled', true);
                 } else {
@@ -896,9 +1277,9 @@ $(function () {
                 }
             }
             // Handle the switch toggle
-            $('#' + swit).prop('checked', toggle === 'true');
+            $('#' + swit).prop('checked', helpers.isTrue(toggle));
         } else {
-            if (toggle === 'false') {
+            if (!helpers.isTrue(toggle)) {
                 $('#' + id + 'Toggle').prop('checked', false);
                 //$('#' + id).slideUp(helpers.DELAY_MS);
                 $('#' + id + ' *').prop('disabled', true);
@@ -908,10 +1289,10 @@ $(function () {
                 $('#' + id + ' *').prop('disabled', false);
             }
         }
-        return toggle === 'true';
+        return helpers.isTrue(toggle);
     };
 
-    /*
+    /**
      * @function Same as the function above but doesn't return anything but true.
      *
      * @param  {String}|{Array} id
@@ -921,7 +1302,26 @@ $(function () {
         return helpers.getModuleStatus(id, toggle, swit);
     };
 
-    /*
+    let _isSwappedSubscriberVIP = true;
+    helpers.isSwappedSubscriberVIP = function () {
+        return _isSwappedSubscriberVIP;
+    };
+
+    let checkSwappedSubscriberVIP = function () {
+        socket.getDBValue('helpers_isSwappedSubscriberVIP', 'settings', 'isSwappedSubscriberVIP', function (e) {
+            _isSwappedSubscriberVIP = helpers.isTrue(e.settings);
+        });
+    };
+
+    setTimeout(function () {
+        checkSwappedSubscriberVIP();
+    }, 5e3);
+
+    setInterval(function () {
+        checkSwappedSubscriberVIP();
+    }, 30e3);
+
+    /**
      * @function Gets the group ID by its name.
      *
      * @param  {String}  name
@@ -929,34 +1329,29 @@ $(function () {
      * @return {Number}
      */
     helpers.getGroupIdByName = function (name, asString) {
-        switch (name.toLowerCase()) {
-            case 'casters':
-            case 'caster':
-                return (asString ? '0' : 0);
-            case 'administrators':
-            case 'administrator':
-                return (asString ? '1' : 1);
-            case 'moderators':
-            case 'moderator':
-                return (asString ? '2' : 2);
-            case 'subscribers':
-            case 'subscriber':
-                return (asString ? '3' : 3);
-            case 'donators':
-            case 'donator':
-                return (asString ? '4' : 4);
-            case 'vips':
-            case 'vip':
-                return (asString ? '5' : 5);
-            case 'regulars':
-            case 'regular':
-                return (asString ? '6' : 6);
-            default:
-                return (asString ? '7' : 7);
+        name = name.trim().toLowerCase();
+
+        if (name.includes('everybody') || name.includes('everyone')) {
+            name = 'viewer';
         }
+
+        if (name.endsWith('s')) {
+            name = name.substring(0, name.length - 1);
+        }
+
+        let idx = -1;
+
+        for (let x in permGroupNames) {
+            if (permGroupNames[x].toLowerCase().includes(name)) {
+                idx = x;
+                break;
+            }
+        }
+
+        return (asString ? idx.toString() : parseInt(idx));
     };
 
-    /*
+    /**
      * @function Gets the group ID by its name.
      *
      * @param  {String}  name
@@ -975,34 +1370,64 @@ $(function () {
         return 'null';
     };
 
-    /*
+    let permGroupNames = [
+        '0 (Caster)',
+        '1 (Administrator)',
+        '2 (Moderator)',
+        '3 (VIP)',
+        '4 (Donator)',
+        '5 (Subscriber)',
+        '6 (Regular)',
+        '7 (Viewer)'
+
+    ];
+
+    let updatePermGroups = function () {
+        socket.getDBTableValues('permissions_get_all_groups', 'groups', function (results) {
+            for (let x of results) {
+                permGroupNames[parseInt(x.key)] = x.key + ' (' + x.value + ')';
+            }
+        });
+    };
+
+    setTimeout(function () {
+        updatePermGroups();
+    }, 5e3);
+
+    setInterval(function () {
+        updatePermGroups();
+    }, 30e3);
+
+    /**
      * @function Gets the group name by its ID.
      *
      * @param  {String} id
      * @return {Number}
      */
     helpers.getGroupNameById = function (id) {
-        switch (id.toString()) {
-            case '0':
-                return 'Caster';
-            case '1':
-                return 'Administrators';
-            case '2':
-                return 'Moderators';
-            case '3':
-                return 'Subscribers';
-            case '4':
-                return 'Donators';
-            case '5':
-                return 'vips';
-            case '6':
-                return 'Regulars';
-            default:
-                return 'Viewers';
-        }
+        return permGroupNames[parseInt(id)]; //The database always holds the names in the correct order
     };
 
-    /*
+    helpers.getPermGroupNames = function () {
+        return permGroupNames;
+    };
+
+    /**
+     * Capitalizes the first letter of each word in a string
+     * @param {String} str The string to process
+     * @returns The string with the first letter of each word being capitalized
+     */
+    helpers.capitalizeFirstLettersInString = function (str) {
+        var words = str.toLowerCase().split(' ');
+        for (var i = 0; i < words.length; i++) {
+          words[i] = words[i].charAt(0).toUpperCase() + words[i].slice(1);
+        }
+        return words.join(' ');
+    };
+
+    helpers.isPermissionErrorRunning = false;
+
+    /**
      * @function Gets the group name by its ID.
      *
      * @param  {String} j
@@ -1014,7 +1439,7 @@ $(function () {
         let perms = [];
 
         for (let i = 0; i < json.roles.length; i++) {
-            if (json.roles[i].selected == 'true')
+            if (helpers.isTrue(json.roles[i].selected))
                 roles.push(json.roles[i].name);
         }
 
@@ -1023,7 +1448,7 @@ $(function () {
         }
 
         for (let i = 0; i < json.permissions.length; i++) {
-            if (json.permissions[i].selected == 'true')
+            if (helpers.isTrue(json.permissions[i].selected))
                 perms.push(json.permissions[i].name);
         }
 
@@ -1037,7 +1462,7 @@ $(function () {
         };
     };
 
-    /*
+    /**
      * @function Handles the dark mode toggle.
      *
      * @param {Boolean} isDark
@@ -1115,7 +1540,7 @@ $(function () {
         $('#notifications-menu-ul').append($('<li/>').append(html));
     };
 
-    /*
+    /**
      * @function Handles showing new updates to the user.
      *
      * @param {String} version
@@ -1131,20 +1556,20 @@ $(function () {
 
                 let html = '';
                 if (version.startsWith("nightly-")) {
-                    html = 'Nightly build ' + version.substr(8) + ' of PhantomBot is now availabel to download! <br>' +
-                            'You can grab your own copy of nightly build ' + version.substr(8) + ' of PhantomBot ' +
+                    html = 'Nightly build ' + version.slice(8) + ' of PhantomBot is now available to download! <br>' +
+                            'You can grab your own copy of nightly build ' + version.slice(8) + ' of PhantomBot ' +
                             $('<a/>', {'target': '_blank', 'rel': 'noopener noreferrer'}).prop('href', downloadLink).append('here.')[0].outerHTML + ' <br>' +
                             '<b>Please check ' +
-                            $('<a/>', {'target': '_blank', 'rel': 'noopener noreferrer'}).prop('href', 'https://phantombot.github.io/PhantomBot/guides/#guide=content/setupbot/updatebot').append('this guide')[0].outerHTML +
+                            $('<a/>', {'target': '_blank', 'rel': 'noopener noreferrer'}).prop('href', 'https://phantombot.dev/guides/#guide=content/setupbot/updatebot').append('this guide')[0].outerHTML +
                             ' on how to properly update PhantomBot.</b>';
                 } else {
-                    html = 'Version ' + version + ' of PhantomBot is now availabel to download! <br>' +
+                    html = 'Version ' + version + ' of PhantomBot is now available to download! <br>' +
                             'You can view the changes of this version ' +
                             $('<a/>', {'target': '_blank', 'rel': 'noopener noreferrer'}).prop('href', 'https://github.com/PhantomBot/PhantomBot/releases/' + version).append('here')[0].outerHTML + '. <br>' +
                             'You can grab your own copy of version ' + version + ' of PhantomBot ' +
                             $('<a/>', {'target': '_blank', 'rel': 'noopener noreferrer'}).prop('href', downloadLink).append('here.')[0].outerHTML + ' <br>' +
                             '<b>Please check ' +
-                            $('<a/>', {'target': '_blank', 'rel': 'noopener noreferrer'}).prop('href', 'https://phantombot.github.io/PhantomBot/guides/#guide=content/setupbot/updatebot').append('this guide')[0].outerHTML +
+                            $('<a/>', {'target': '_blank', 'rel': 'noopener noreferrer'}).prop('href', 'https://phantombot.dev/guides/#guide=content/setupbot/updatebot').append('this guide')[0].outerHTML +
                             ' on how to properly update PhantomBot.</b>';
                 }
 
@@ -1170,7 +1595,7 @@ $(function () {
         }
     };
 
-    /*
+    /**
      * @function Gets a random rgb color.
      *
      * @return {String}
@@ -1179,7 +1604,7 @@ $(function () {
         return 'rgb(' + Math.floor(Math.random() * 256) + ', ' + Math.floor(Math.random() * 256) + ', ' + Math.floor(Math.random() * 256) + ')';
     };
 
-    /*
+    /**
      * @function Used to print debug messages in the console.
      *
      * @param {String}  message
@@ -1191,7 +1616,7 @@ $(function () {
         }
     };
 
-    /*
+    /**
      * @function Used to print error messages in the console.
      *
      * @param {String}  message
@@ -1201,7 +1626,7 @@ $(function () {
         console.log('%c[PhantomBot Error]', 'color: red; font-weight: 900;', message);
     };
 
-    /*
+    /**
      * @function Gets the epoch time from a date.
      *
      * @param  {String}  date
@@ -1232,10 +1657,50 @@ $(function () {
         return parsedDate;
     };
 
+    /**
+     * Returns a function prototype that sets a timeout in the future and executes the given function then
+     *
+     * @param func the function to debounce
+     * @param timeout the timespan to debounce in ms
+     * @returns {(function(...[*]=): void)|*} the given function wrapped in the debounce functionality
+     */
+    helpers.debounce = function (func, timeout = 300) {
+        let timer;
+        return (...args) => {
+            window.clearInterval(timer);
+            timer = window.setTimeout(() => {
+                func.apply(this, args);
+            }, timeout);
+        };
+    };
+
+    helpers.parseQuerymap = function () {
+        if (window.location.search.length === 0) {
+            return;
+        }
+        var query = window.location.search.slice(1);
+        if (query.includes('?')) {
+            query = query.replace('?', '&');
+        }
+        var kvs = query.split('&');
+        var querymap = {};
+        var spl;
+
+        for (var i = 0; i < kvs.length; i++) {
+            spl = kvs[i].split('=', 2);
+            querymap[spl[0]] = spl[1];
+        }
+
+        helpers.querymap = querymap;
+    };
+
     helpers.parseHashmap = function () {
-        var hash = window.location.hash.substr(1);
+        if (window.location.hash.length === 0) {
+            return;
+        }
+        var hash = window.location.hash.slice(1);
         var kvs = hash.split('&');
-        var hashmap = [];
+        var hashmap = {};
         var spl;
 
         for (var i = 0; i < kvs.length; i++) {
@@ -1247,21 +1712,31 @@ $(function () {
     };
 
     helpers.setupAuth = function () {
-        if (window.localStorage.getItem('remember') && window.localStorage.getItem('expires')) {
-            if (window.localStorage.getItem('expires') > Date.now()) {
-                window.localStorage.setItem('expires', Date.now() + (parseInt(window.localStorage.getItem('remember')) * 3600000));
-            } else {
-                window.sessionStorage.removeItem('webauth');
-            }
-        }
         window.panelSettings.auth = window.sessionStorage.getItem('webauth') || '!missing';
     };
 
     helpers.getBotHost = function () {
         var bothostname = window.localStorage.getItem('bothostname') || 'localhost';
-        var botport = window.localStorage.getItem('botport') || 25000;
+        var botport = window.localStorage.getItem('botport') || '25000';
 
-        return bothostname.length > 0 ? bothostname + (botport !== 80 && botport !== 443 ? ':' + botport : '') : '!missing';
+        return bothostname.length > 0 ? bothostname + (botport !== '80' && botport !== '443' ? ':' + botport : '') : '!missing';
+    };
+
+    helpers.shouldUseHttpsPrefix = function () {
+        var bothostname = window.localStorage.getItem('bothostname') || 'localhost';
+        var botport = window.localStorage.getItem('botport') || '25000';
+
+        return botport === '443' && bothostname.match(/(([0-9]{1,3})\.){3}([0-9]{1,3})/) === null && bothostname !== 'localhost';
+    };
+
+    helpers.getBotSchemePath = function (sslSettings) {
+        let useSsl = helpers.shouldUseHttpsPrefix();
+
+        if (sslSettings !== undefined && sslSettings !== null) {
+            useSsl = helpers.shouldUseHttpsPrefix() && !sslSettings.autoSSL;
+        }
+
+        return 'http' + (useSsl ? 's' : '') + '://' + helpers.getBotHost();
     };
 
     helpers.getUserLogo = function () {
@@ -1271,6 +1746,102 @@ $(function () {
                 $('#user-image2').attr('src', 'data:image/jpeg;base64, ' + e[0].logo);
             }
         });
+    };
+
+    helpers.loadCurrentUserInfo = function () {
+        socket.getPanelUser("get_current_panel_user", helpers.getPanelUserNameFromCookie(), function (res) {
+            if (res === undefined || res.error !== undefined) {
+                helpers.signOut();
+            }
+            helpers.currentPanelUserData = res;
+        });
+    };
+
+    helpers.getCookieField = function (name) {
+        let decodedCookie = decodeURIComponent(document.cookie),
+            cookieArray = decodedCookie.split(';');
+        name = name + "=";
+
+        for(let i = 0; i < cookieArray.length; i++) {
+            let cookie = cookieArray[i].trim();
+
+            if (cookie.indexOf(name) === 0) {
+                return cookie.substring(name.length, cookie.length);
+            }
+        }
+
+        return undefined;
+    };
+
+    helpers.getPanelUserNameFromCookie = function () {
+        // A passkey login has no readable cookie, the login page stores the username instead
+        if (helpers.isPasskeySession()) {
+            return window.sessionStorage.getItem('panelUser');
+        }
+
+        let b64 = helpers.getCookieField("panellogin");
+        if (b64 === undefined) {
+            return "Phantombot";
+        }
+        let userpass = atob(b64);
+        let colon = userpass.indexOf(':');
+        return userpass.substring(0, colon);
+    };
+
+    /**
+     * Checks if the panel was signed in with a passkey
+     *
+     * @returns {Boolean} true if it was
+     */
+    helpers.isPasskeySession = function () {
+        return window.sessionStorage.getItem('panelUser') !== null;
+    };
+
+    /**
+     * Returns to the login page if the panel was signed in with a passkey, because a passkey session that has ended can not be recovered here
+     *
+     * @returns {Boolean} true if the panel is leaving for the login page
+     */
+    helpers.leaveEndedPasskeySession = function () {
+        if (!helpers.isPasskeySession()) {
+            return false;
+        }
+
+        window.logoutCookie();
+        window.location = window.location.origin + window.location.pathname + 'login/#missingAuth=true';
+        return true;
+    };
+
+    helpers.signOut = function () {
+        const isPasskeySession = helpers.isPasskeySession(),
+            redirect = function () {
+                window.location = window.location.origin + window.location.pathname + 'login/#logoutSuccess=true';
+            };
+
+        toastr.info('Signing out...', '', {timeOut: 0});
+        socket.close();
+        window.logoutCookie();
+
+        if (isPasskeySession) {
+            // Only the bot can end a passkey session and remove its cookie
+            fetch('/panel/login/passkey/logout', {method: 'POST'}).finally(redirect);
+        } else {
+            redirect();
+        }
+    };
+
+    helpers.getDateStringFromDate = function (date) {
+        if (date === undefined) {
+            return 'Invalid Date';
+        }
+        let months = ["January", "February", "March", "April", "May", "June",
+                        "July", "August", "September", "October", "November", "December"
+                        ],
+                hours = (date.getHours() < 10) ? "0" + date.getHours() : date.getHours(),
+                minutes = (date.getMinutes() < 10) ? "0" + date.getMinutes() : date.getMinutes(),
+                seconds = (date.getSeconds() < 10) ? "0" + date.getSeconds() : date.getSeconds();
+
+        return date.getFullYear() + " " + months[date.getMonth()] + " " + date.getDate() + " " + hours +  ":" + minutes + ":" + seconds;
     };
 
     //https://stackoverflow.com/a/57380742
@@ -1290,6 +1861,8 @@ $(function () {
         return new Promise(startPoll);
     };
 
+    helpers.sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
     helpers.toggleDebug = function () {
         localStorage.setItem('phantombot_debug_state', localStorage.getItem('phantombot_debug_state') !== '1' ? '1' : '0');
         helpers.DEBUG_STATE = (localStorage.getItem('phantombot_debug_state') !== null ? parseInt(localStorage.getItem('phantombot_debug_state')) : helpers.DEBUG_STATES.NONE);
@@ -1298,6 +1871,127 @@ $(function () {
 
     helpers.isLocalPanel = function () {
         return helpers.getBotHost() === window.location.host;
+    };
+
+    const ipRegex = /(?<ip>(?<ipv4>(?:25[0-5]|2[0-4][0-9]|[0-1][0-9]{2}|[1-9][0-9]|[0-9])\.(?:25[0-5]|2[0-4][0-9]|[0-1][0-9]{2}|[1-9][0-9]|[0-9])\.(?:25[0-5]|2[0-4][0-9]|[0-1][0-9]{2}|[1-9][0-9]|[0-9])\.(?:25[0-5]|2[0-4][0-9]|[0-1][0-9]{2}|[1-9][0-9]|[0-9]))|(?<ipv6>(?:::)?(?:[0-9a-fA-F]{1,4}(?:::|:)){2,7}(?:[0-9a-fA-F]{1,4}|)|(?:::[0-9a-fA-F]{1,4})|(?:[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4})?)))/;
+
+    /** Takes an object {} and an array [] of keys.
+    * Foreach key in keys:
+    *   If obj has the key, and its value is typeof string that starts with '{',
+    *   attempts to parse the value as JSON. On success, the string value is replaced
+    *   with the resulting object. On failure info is sent to debug, the value is left unchanged,
+    *   and the next key is processed.
+    * Does not return anything, the original object will be changed.
+    */
+    helpers.parseJSONValues = function (obj, keys) {
+        for (let key in keys) {
+            key = keys[key];
+            if (obj.hasOwnProperty(key)) {
+                try {
+                    if (typeof obj[key] === 'string' && obj[key].startsWith('{')) {
+                        let tmp = JSON.parse(obj[key]);
+                        obj[key] = tmp;
+                    }
+                } catch (e) {
+                    helpers.logError(key + ': "' + obj[key] + '" -> ' + e, helpers.LOG_TYPE.DEBUG);
+                }
+            }
+        }
+    };
+
+    helpers.isNightly = function () {
+        return helpers.version.hasOwnProperty('build-type') && helpers.version['build-type'].startsWith('nightly');
+    };
+
+    helpers.getBranch = function () {
+        return helpers.isNightly() ? 'nightly' : 'stable';
+    };
+
+    helpers.canEmbedTwitch = function() {
+        return location.protocol.toLowerCase().startsWith('https') && location.hostname.includes('.') && !ipRegex.test(location.hostname) && (location.port === '' || location.port === 443);
+    };
+
+    helpers.CANT_EMBED_TWITCH_TEXT = 'Due to changes by Twitch, the live feed panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443 or setup a reverse proxy. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.dev/">PhantomBot</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.dev/guides/#guide=content/integrations/twitchembeds&channel=' + helpers.getBranch() + '">this guide</a>.';
+
+    /**
+     * Opens the dialog that links a Bluesky account with an app password. The bot checks the handle and app
+     * password with Bluesky before saving them. Only the bot's config users can link an account.
+     */
+    helpers.openBlueskyLinkModal = function () {
+        // The toasts show HTML, and these values come from the Bluesky service the user chose
+        let toText = function (value) {
+            return $('<div/>').text(value === undefined || value === null ? '' : String(value)).html();
+        };
+
+        socket.getDBValues('bluesky_get_account', {
+            tables: ['bluesky', 'bluesky', 'bluesky', 'bluesky'],
+            keys: ['account', 'service', 'auth_status', 'auth_error']
+        }, true, function (e) {
+            let status = 'No account is linked.';
+
+            if (e.auth_status === 'ok' && e.account) {
+                status = 'Linked as @' + e.account + '.';
+            } else if (e.auth_status === 'failed' || e.auth_status === 'error') {
+                status = 'Signing in to Bluesky failed: ' + e.auth_error;
+            }
+
+            helpers.getModal('bluesky-link', 'Link Bluesky Account', 'Link', $('<form/>', {
+                'role': 'form'
+            }).append($('<div/>', {
+                'class': 'box box-info'
+            }).append($('<div/>', {
+                'class': 'box-header',
+                'html': 'App Password'
+            })).append($('<div/>', {
+                'class': 'box-body',
+                'html': '<ol>'
+                        + '<li>Sign in to <a href="https://bsky.app" target="_blank">Bluesky</a> with the account the bot should post as</li>'
+                        + '<li>Open <b>Settings</b>, then <b>Privacy and security</b>, then <b>App passwords</b></li>'
+                        + '<li>Click <b>Add App Password</b>, name it, for example <i>PhantomBot</i>, and leave access to direct messages off</li>'
+                        + '<li>Copy the app password into the box below. Do not use your account password</li>'
+                        + '</ol>'
+            }))).append($('<p/>', {
+                'text': status
+            })).append(helpers.getInputGroup('bluesky-link-handle', 'text', 'Handle', 'name.bsky.social', e.account || '',
+                    'The handle of the account, such as name.bsky.social.'))
+                .append(helpers.getInputGroup('bluesky-link-password', 'password', 'App Password', 'xxxx-xxxx-xxxx-xxxx', '',
+                    'The app password. It is checked with Bluesky before it is saved.'))
+                .append(helpers.getInputGroup('bluesky-link-service', 'text', 'Service (Optional)', 'https://bsky.social', e.service || '',
+                    'Only needed for an account on a self-hosted PDS.')), function () {
+                let handle = $('#bluesky-link-handle'),
+                        password = $('#bluesky-link-password');
+
+                switch (false) {
+                    case helpers.handleInputString(handle):
+                    case helpers.handleInputString(password):
+                        break;
+                    default:
+                        socket.wsEvent('bluesky_link_' + Date.now(), 'SocialPlatforms.java', null,
+                                ['link', 'bluesky', handle.val().trim(), password.val().trim(), $('#bluesky-link-service').val().trim()], function (e) {
+                            if (e.success) {
+                                $('#bluesky-link').modal('hide');
+                                toastr.success('Linked Bluesky as @' + toText(e.account) + '!');
+                            } else if (e.error === 'notlinked') {
+                                toastr.error('Bluesky refused the handle or app password: ' + toText(e.detail));
+                            } else {
+                                toastr.error('Could not link Bluesky: ' + toText(e.detail || e.error));
+                            }
+                        }, true);
+                }
+            }, {
+                'footerpre': [$('<button/>', {
+                    'class': 'btn btn-danger pull-left',
+                    'type': 'button',
+                    'text': 'Unlink',
+                    'click': function () {
+                        socket.wsEvent('bluesky_unlink_' + Date.now(), 'SocialPlatforms.java', null, ['unlink', 'bluesky'], function () {
+                            $('#bluesky-link').modal('hide');
+                            toastr.success('Unlinked Bluesky.');
+                        }, true);
+                    }
+                })]
+            }).modal('toggle');
+        });
     };
 
     // Export.

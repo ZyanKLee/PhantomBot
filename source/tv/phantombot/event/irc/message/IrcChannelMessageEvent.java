@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,30 +17,56 @@
 package tv.phantombot.event.irc.message;
 
 import java.util.Map;
+
+import com.gmt2001.twitch.tmi.TMIMessage;
+
 import tv.phantombot.twitch.irc.TwitchSession;
 
 public class IrcChannelMessageEvent extends IrcMessageEvent {
+    private final TMIMessage tmimsg;
 
     /**
      * Class constructor.
      *
-     * @param {TwitchSession} session
-     * @param {String}  sender
-     * @param {String}  message
+     * @param session
+     * @param sender
+     * @param message
      */
     public IrcChannelMessageEvent(TwitchSession session, String sender, String message) {
-        super(session, sender, message);
+        this(session, sender, message, null);
     }
 
     /**
      * Class constructor.
      *
-     * @param {TwitchSession} session
-     * @param {String}  sender
-     * @param {String}  message
-     * @param {Map}     tags
+     * @param session
+     * @param sender
+     * @param message
+     * @param tags
      */
     public IrcChannelMessageEvent(TwitchSession session, String sender, String message, Map<String, String> tags) {
+        this(session, sender, message, tags, null);
+    }
+
+    /**
+     * Class constructor.
+     *
+     * @param session
+     * @param sender
+     * @param message
+     * @param tags
+     */
+    public IrcChannelMessageEvent(TwitchSession session, String sender, String message, Map<String, String> tags, TMIMessage tmimsg) {
         super(session, sender, message, tags);
+        this.tmimsg = tmimsg;
+    }
+
+    /**
+     * The raw {@link TMIMessage} object
+     *
+     * @return
+     */
+    public TMIMessage tmimsg() {
+        return this.tmimsg;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@ package com.gmt2001.httpwsserver.auth;
 
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpHeaders;
 
 /**
  * Provides a {@link HttpAuthenticationHandler} that allows all requests
@@ -49,7 +50,7 @@ public class HttpNoAuthenticationHandler implements HttpAuthenticationHandler {
      *
      * @param ctx The {@link ChannelHandlerContext} of the session
      * @param req The {@link FullHttpRequest} of the request
-     * @return {@code true}
+     * @return
      */
     @Override
     public boolean checkAuthorization(ChannelHandlerContext ctx, FullHttpRequest req) {
@@ -59,5 +60,20 @@ public class HttpNoAuthenticationHandler implements HttpAuthenticationHandler {
     @Override
     public void invalidateAuthorization(ChannelHandlerContext ctx, FullHttpRequest req) {
         throw new UnsupportedOperationException("Not supported by this authentication handler.");
+    }
+
+    @Override
+    public boolean isAuthorized(ChannelHandlerContext ctx, FullHttpRequest req) {
+        return true;
+    }
+
+    @Override
+    public boolean isAuthorized(String user, String pass) {
+        return true;
+    }
+
+    @Override
+    public boolean isAuthorized(ChannelHandlerContext ctx, HttpHeaders headers) {
+        return true;
     }
 }

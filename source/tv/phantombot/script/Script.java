@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,123 +17,63 @@
 package tv.phantombot.script;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
 import org.mozilla.javascript.Context;
-import org.mozilla.javascript.ContextFactory;
-import org.mozilla.javascript.EvaluatorException;
-import org.mozilla.javascript.NativeObject;
 import org.mozilla.javascript.RhinoException;
 import org.mozilla.javascript.ScriptableObject;
-import org.mozilla.javascript.StackStyle;
-import org.mozilla.javascript.tools.debugger.Main;
+
 import tv.phantombot.PhantomBot;
 
 public class Script {
-
-    public static final NativeObject global = new NativeObject();
-    @SuppressWarnings("rawtypes")
-    private final List<ScriptDestroyable> destroyables = new ArrayList<>();
-    private static final NativeObject vars = new NativeObject();
+    private final List<ScriptDestroyable<?>> destroyables = new ArrayList<>();
     private final File file;
+    private final String fileName;
     private long lastModified;
-    private Context context;
     private boolean killed = false;
-    private int fileNotFoundCount = 0;
-    private static ScriptableObject scope;
 
-    @SuppressWarnings("CallToThreadStartDuringObjectConstruction")
-    public Script(File file) {
+    public Script(File file, String fileName) {
         this.file = file;
+        this.fileName = fileName;
         this.lastModified = file.lastModified();
 
         if (PhantomBot.getReloadScripts()) {
-            ScriptFileWatcher.instance().addScript(this);
+            try {
+                ScriptFileWatcher.instance().addScript(this);
+            } catch (IOException e) {
+                com.gmt2001.Console.err.printStackTrace(e);
+            }
         }
     }
 
-    public static String callMethod(String method, String arg) {
-        Object[] obj = new Object[] {arg};
-
-        return ScriptableObject.callMethod(global, method, obj).toString();
+    public void reload() throws IOException {
+        reload(true);
     }
 
-    @SuppressWarnings("rawtypes")
-    public void reload() throws IOException {
+    public void reload(boolean silent) throws IOException {
         if (killed) {
             return;
         }
 
         doDestroyables();
-        try {
-            load();
+        load();
+
+        if (silent) {
             if (file.getPath().endsWith("init.js")) {
                 com.gmt2001.Console.out.println("Reloaded module: init.js");
             } else {
                 String path = file.getPath().replace("\056\134", "").replace("\134", "/").replace("scripts/", "");
                 com.gmt2001.Console.out.println("Reloaded module: " + path);
             }
-            fileNotFoundCount = 0;
-        } catch (IOException ex) {
-            if (ex.getMessage().contains("This could be a caching issue")) {
-                fileNotFoundCount++;
-                if (fileNotFoundCount == 1) {
-                    return;
-                }
-            } else {
-                fileNotFoundCount = 0;
-            }
-
-            if (file.getPath().endsWith("init.js")) {
-                com.gmt2001.Console.err.println("Failed to reload module: init.js: " + ex.getMessage());
-            } else {
-                String path = file.getPath().replace("\056\134", "").replace("\134", "/").replace("scripts/", "");
-                com.gmt2001.Console.err.println("Failed to reload module: " + path + ": " + ex.getMessage());
-            }
         }
     }
 
-    @SuppressWarnings("rawtypes")
-    public void reload(Boolean silent) throws IOException {
-        if (killed) {
-            return;
-        }
-
-        doDestroyables();
-        try {
-            load();
-            if (silent) {
-                if (file.getPath().endsWith("init.js")) {
-                    com.gmt2001.Console.out.println("Reloaded module: init.js");
-                } else {
-                    String path = file.getPath().replace("\056\134", "").replace("\134", "/").replace("scripts/", "");
-                    com.gmt2001.Console.out.println("Reloaded module: " + path);
-                }
-            }
-            fileNotFoundCount = 0;
-        } catch (IOException ex) {
-            if (ex.getMessage().contains("This could be a caching issue")) {
-                fileNotFoundCount++;
-                if (fileNotFoundCount == 1) {
-                    return;
-                }
-            } else {
-                fileNotFoundCount = 0;
-            }
-
-            if (file.getPath().endsWith("init.js")) {
-                com.gmt2001.Console.err.println("Failed to reload module: init.js: " + ex.getMessage());
-            } else {
-                String path = file.getPath().replace("\056\134", "").replace("\134", "/").replace("scripts/", "");
-                com.gmt2001.Console.err.println("Failed to reload module: " + path + ": " + ex.getMessage());
-            }
-        }
-    }
-
-    public void load() throws IOException {
+    public void load() {
         if (killed) {
             return;
         }
@@ -147,66 +87,26 @@ public class Script {
             return;
         }
 
-        /* Enable Error() in JS to provide an object with fileName and lineNumber. */
-        final ContextFactory ctxFactory = new ContextFactory() {
-            @Override
-            protected boolean hasFeature(Context cx, int featureIndex) {
-                switch (featureIndex) {
-                case Context.FEATURE_LOCATION_INFORMATION_IN_ERROR:
-                    return true;
-                default:
-                    return super.hasFeature(cx, featureIndex);
-                }
-            }
-        };
-        RhinoException.setStackStyle(StackStyle.MOZILLA);
-
-        /* Create Debugger Instance - this opens for only init.js */
-        Main debugger = null;
-        if (PhantomBot.getEnableRhinoDebugger()) {
-            if (file.getName().endsWith("init.js")) {
-                debugger = new Main(file.getName());
-                debugger.attachTo(ctxFactory);
-            }
-        }
-
-        context = ctxFactory.enterContext();
-        if (!PhantomBot.getEnableRhinoDebugger()) {
-            context.setOptimizationLevel(9);
-        }
-
-        scope = context.initStandardObjects(vars, false);//Normal scripting object.
-        scope.defineProperty("$", global, 0);// Global functions that can only be accessed and replaced with $.
-        scope.defineProperty("$api", ScriptApi.instance(), 0);
-        scope.defineProperty("$script", this, 0);
-
-        /* Configure debugger. */
-        if (PhantomBot.getEnableRhinoDebugger()) {
-            if (file.getName().endsWith("init.js")) {
-                debugger.setBreakOnEnter(false);
-                debugger.setScope(scope);
-                debugger.setSize(640, 480);
-                debugger.setVisible(true);
-            }
-        }
+        Context context = RhinoRuntime.getContextFactory().enterContext();
+        ScriptableObject localscope = RhinoRuntime.getBaseScope();
+        localscope.defineProperty("$script", this, ScriptableObject.PERMANENT);
 
         try {
-            context.evaluateString(scope, Files.readString(file.toPath()), file.getName(), 1, null);
-        } catch (FileNotFoundException ex) {
-            throw new IOException("File not found. This could be a caching issue, will retry.");
-        } catch (EvaluatorException ex) {
-            throw new IOException("JavaScript Error: " + ex.getMessage());
-        } catch (IOException ex) {
-            throw new IOException(ex.getMessage());
+            context.evaluateString(localscope, Files.readString(file.toPath()), file.getName(), 1, null);
+        } catch (IOException | RhinoException ex) {
+            com.gmt2001.Console.err.println(ex.getMessage());
+            com.gmt2001.Console.err.printStackTrace(ex, Map.of("file", this.getPath()));
+        } catch (Throwable t) { // catch byte-code errors (After Rhino Compilation)
+            com.gmt2001.Console.err.printStackTrace(t, Map.of("file", this.getPath()));
+        } finally {
+            Context.exit();
         }
     }
 
-    @SuppressWarnings("rawtypes")
-    public List<ScriptDestroyable> destroyables() {
+    public List<ScriptDestroyable<?>> destroyables() {
         return destroyables;
     }
 
-    @SuppressWarnings("rawtypes")
     public void doDestroyables() {
         destroyables.forEach((destroyable) -> {
             destroyable.destroy();
@@ -231,8 +131,8 @@ public class Script {
         return file.toPath().toString();
     }
 
-    public Context getContext() {
-        return context;
+    public String getRealFileName() {
+        return fileName;
     }
 
     public boolean isKilled() {
@@ -240,15 +140,40 @@ public class Script {
     }
 
     public void kill() {
-        if (context == null) {
-            return;
+        ObservingDebugger od = null;
+        if (PhantomBot.getEnableRhinoDebugger()) {
+            od = new ObservingDebugger();
+            Context context = RhinoRuntime.getContextFactory().enterContext();
+            try {
+                context.setDebugger(od, 0);
+                context.setGeneratingDebug(true);
+            } finally {
+                Context.exit();
+            }
         }
-        ObservingDebugger od = new ObservingDebugger();
-        context.setDebugger(od, 0);
-        context.setGeneratingDebug(true);
-        context.setOptimizationLevel(-1);
+
         doDestroyables();
-        od.setDisconnected(true);
         killed = true;
+
+        if (od != null) {
+            od.setDisconnected(true);
+        }
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(file);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        Script other = (Script) obj;
+        return Objects.equals(file, other.file);
     }
 }

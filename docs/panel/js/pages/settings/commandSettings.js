@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,54 +16,94 @@
  */
 
 // Function that querys all of the data we need.
-$(run = function() {
+$(run = function () {
     // Get command settings.
     socket.getDBValues('get_command_settings', {
         tables: ['settings', 'settings', 'settings', 'settings', 'cooldownSettings',
-            'cooldownSettings'],
+            'cooldownSettings', 'panelData', 'settings'],
         keys: ['permComMsgEnabled', 'priceComMsgEnabled', 'coolDownMsgEnabled',
-            'pricecomMods', 'modCooldown', 'defaultCooldownTime']
-    }, true, function(e) {
+            'pricecomMods', 'modCooldown', 'defaultCooldownTime', 'hasDiscord', 'rankShowRankInResolveRank']
+    }, true, function (e) {
         // Set cost message.
-        $('#cmd-cost-messages').val((e.priceComMsgEnabled === 'true' ? 'Yes' : 'No'));
+        $('#cmd-cost-messages').val((helpers.isTrue(e.priceComMsgEnabled) ? 'Yes' : 'No'));
         // Set permission message.
-        $('#cmd-perm-messages').val((e.permComMsgEnabled === 'true' ? 'Yes' : 'No'));
+        $('#cmd-perm-messages').val((helpers.isTrue(e.permComMsgEnabled) ? 'Yes' : 'No'));
         // Set cooldown message.
-        $('#cmd-cooldown-messages').val((e.coolDownMsgEnabled === 'true' ? 'Yes' : 'No'));
+        $('#cmd-cooldown-messages').val((helpers.isTrue(e.coolDownMsgEnabled) ? 'Yes' : 'No'));
+        // Set resolve rank.
+        $('#cmd-show-resolverank').val((helpers.isTrue(e.rankShowRankInResolveRank) ? 'Yes' : 'No'));
         // Set cost for mods.
-        $('#pricecom-mods').val((e.pricecomMods === 'true' ? 'No' : 'Yes'));
+        $('#pricecom-mods').val((helpers.isTrue(e.pricecomMods) ? 'No' : 'Yes'));
         // Set cooldown for mods.
-        $('#cooldown-mods').val((e.modCooldown === 'true' ? 'No' : 'Yes'));
+        $('#cooldown-mods').val((helpers.isTrue(e.modCooldown) ? 'No' : 'Yes'));
         // Set global cooldown.
         $('#global-cooldown').val(e.defaultCooldownTime);
+        // Remove discord cooldown or get data.
+        if (helpers.isTrue(e.hasDiscord)) {
+            socket.getDBValues('get_discord_command_settings', {
+                tables: ['discordCooldownSettings', 'discordCooldownSettings'],
+                keys: ['defaultCooldownTime', 'coolDownMsgEnabled']
+            }, true, function (e) {
+                $('#cmd-discord-cooldown-messages').val((helpers.isTrue(e.coolDownMsgEnabled) ? 'Yes' : 'No'));
+                $('#global-discord-cooldown').val(e.defaultCooldownTime);
+            });
+        } else {
+            $('#cmd-discord-cooldown-messages').parent().parent().remove();
+            $('#global-discord-cooldown').parent().remove();
+        }
     });
 });
 
 // Function that handles events.
-$(function() {
+$(function () {
     // Save button.
-    $('#cmd-save-btn').on('click', function() {
+    $('#cmd-save-btn').on('click', function () {
         let cmdCostMessage = $('#cmd-cost-messages').find(':selected').text() === 'Yes',
-            cmdPermMessage = $('#cmd-perm-messages').find(':selected').text() === 'Yes',
-            cmdCooldownMessage = $('#cmd-cooldown-messages').find(':selected').text() === 'Yes',
-            priceComMods = $('#pricecom-mods').find(':selected').text() !== 'Yes',
-            cooldownMods = $('#cooldown-mods').find(':selected').text() !== 'Yes',
-            globalTime = $('#global-cooldown');
+                cmdPermMessage = $('#cmd-perm-messages').find(':selected').text() === 'Yes',
+                cmdCooldownMessage = $('#cmd-cooldown-messages').find(':selected').text() === 'Yes',
+                cmdShowResolverank = $('#cmd-show-resolverank').find(':selected').text() === 'Yes',
+                priceComMods = $('#pricecom-mods').find(':selected').text() !== 'Yes',
+                cooldownMods = $('#cooldown-mods').find(':selected').text() !== 'Yes',
+                globalTime = $('#global-cooldown'),
+                discordCmdCooldownMessage = $('#cmd-discord-cooldown-messages').find(':selected').text() === 'Yes',
+                discordCooldown = $('#global-discord-cooldown');
+
+        // Check if element exists -> saves another DB-Lookup
+        if (discordCooldown !== undefined) {
+            if (!helpers.handleInputNumber(discordCooldown, 5) === null) {
+                return;
+            }
+        }
 
         switch (false) {
             case helpers.handleInputNumber(globalTime, 5):
                 break;
             default:
+
+                if (discordCooldown !== undefined) {
+                    socket.updateDBValues('update_dc_global_CD', {
+                        tables: ['discordCooldownSettings', 'discordCooldownSettings'],
+                        keys: ['defaultCooldownTime', 'coolDownMsgEnabled'],
+                        values: [discordCooldown.val(), discordCmdCooldownMessage]
+                    }, function () {
+                        socket.wsEvent('update_dc_global_CD_ws', './discord/core/commandCoolDown.js', null, ['update'], new Function());
+                        //If the socket fails here it will fail in the next wsEvent as well and inform the user
+                    });
+                }
+
                 socket.updateDBValues('update_cmd_settings', {
-                    tables: ['settings', 'settings', 'settings', 'settings', 'cooldownSettings',
-                        'cooldownSettings'],
-                    keys: ['permComMsgEnabled', 'priceComMsgEnabled', 'coolDownMsgEnabled',
-                        'pricecomMods', 'modCooldown', 'defaultCooldownTime'],
-                    values: [cmdPermMessage, cmdCostMessage, cmdCooldownMessage,
-                        priceComMods, cooldownMods, globalTime.val()]
-                }, function() {
-                    socket.wsEvent('update_cmd_settings_ws', './core/commandCoolDown.js', null, ['update'], function() {
+                    tables: ['settings', 'settings', 'settings', 'settings', 'cooldownSettings', 'cooldownSettings'],
+                    keys: ['permComMsgEnabled', 'priceComMsgEnabled', 'coolDownMsgEnabled', 'pricecomMods', 'modCooldown', 'defaultCooldownTime'],
+                    values: [cmdPermMessage, cmdCostMessage, cmdCooldownMessage, priceComMods, cooldownMods, globalTime.val()]
+                }, function () {
+                    socket.wsEvent('update_cmd_settings_ws', './core/commandCoolDown.js', null, ['update'], function () {
                         toastr.success('Successfully update command settings!');
+                    });
+                });
+
+                socket.updateDBValue('update_resolverank_setting', 'settings', 'rankShowRankInResolveRank', cmdShowResolverank, function() {
+                    socket.wsEvent('update_resolverank_setting_ws', './systems/rankSystem.js', null, ['update'], function() {
+                        // Do nothing.
                     });
                 });
         }

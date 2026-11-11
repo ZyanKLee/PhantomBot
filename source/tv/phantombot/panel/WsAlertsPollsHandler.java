@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,20 +16,29 @@
  */
 package tv.phantombot.panel;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
+import org.apache.commons.io.FilenameUtils;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.json.JSONStringer;
+
 import com.gmt2001.httpwsserver.WebSocketFrameHandler;
 import com.gmt2001.httpwsserver.WsFrameHandler;
 import com.gmt2001.httpwsserver.auth.WsAuthenticationHandler;
 import com.gmt2001.httpwsserver.auth.WsSharedRWTokenAuthenticationHandler;
+
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
-import java.util.LinkedList;
-import java.util.List;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-import org.json.JSONStringer;
-import tv.phantombot.PhantomBot;
+import tv.phantombot.CaselessProperties;
 import tv.phantombot.event.EventBus;
 import tv.phantombot.event.webpanel.websocket.WebPanelSocketUpdateEvent;
 
@@ -38,6 +47,9 @@ import tv.phantombot.event.webpanel.websocket.WebPanelSocketUpdateEvent;
  * @author gmt2001
  */
 public class WsAlertsPollsHandler implements WsFrameHandler {
+
+    private static final String KEY_EVENT_TYPE = "type";
+    static final String[] AUDIO_EXTS = {"mp3", "aac", "ogg", "wav", "m4a"};
 
     private final WsAuthenticationHandler authHandler;
 
@@ -58,9 +70,7 @@ public class WsAlertsPollsHandler implements WsFrameHandler {
 
     @Override
     public void handleFrame(ChannelHandlerContext ctx, WebSocketFrame frame) {
-        if (frame instanceof TextWebSocketFrame) {
-            TextWebSocketFrame tframe = (TextWebSocketFrame) frame;
-
+        if (frame instanceof TextWebSocketFrame tframe) {
             JSONObject jso;
 
             try {
@@ -70,58 +80,131 @@ public class WsAlertsPollsHandler implements WsFrameHandler {
                 return;
             }
 
-            if (PhantomBot.instance().getProperties().getPropertyAsBoolean("wsdebug", false)) {
+            if (CaselessProperties.instance().getPropertyAsBoolean("wsdebug", false)) {
                 com.gmt2001.Console.debug.println(jso.toString());
             }
 
-            if (jso.has("socket_event")) {
-                handleSocketEvent(ctx, frame, jso);
+            if (jso.has("pollState")) {
+                handlePollState(ctx, frame, jso);
             }
         }
     }
 
-    private void handleSocketEvent(ChannelHandlerContext ctx, WebSocketFrame frame, JSONObject jso) {
-        String script = jso.getString("script");
-        String arguments = jso.getJSONObject("args").getString("arguments");
-        JSONArray jsonArray = jso.getJSONObject("args").getJSONArray("args");
-        String uniqueID = jso.has("socket_event") ? jso.getString("socket_event") : "";
-
-        JSONStringer jsonObject = new JSONStringer();
-        List<String> tempArgs = new LinkedList<>();
-        String[] args = null;
-
-        for (int i = 0; i < jsonArray.length(); i++) {
-            tempArgs.add(jsonArray.getString(i));
-        }
-
-        if (!tempArgs.isEmpty()) {
-            int i = 0;
-            args = new String[tempArgs.size()];
-
-            for (String str : tempArgs) {
-                args[i] = str;
-                ++i;
-            }
-        }
-
-        EventBus.instance().post(new WebPanelSocketUpdateEvent(uniqueID, script, arguments, args));
-        jsonObject.object().key("query_id").value(uniqueID).endObject();
-        WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jsonObject.toString()));
+    private void handlePollState(ChannelHandlerContext ctx, WebSocketFrame frame, JSONObject jso) {
+        EventBus.instance().postAsync(new WebPanelSocketUpdateEvent("pollState", "./systems/pollSystem.js", null, null));
     }
 
     public void sendJSONToAll(String jsonString) {
         try {
-            WebSocketFrameHandler.broadcastWsFrame("/ws/alertspolls", WebSocketFrameHandler.prepareTextWebSocketResponse(jsonString));
+            WebSocketFrameHandler.broadcastWsFrame("/ws/alertspolls", WebSocketFrameHandler.prepareTextWebSocketResponse(jsonString), true);
         } catch (Exception ex) {
             com.gmt2001.Console.err.printStackTrace(ex);
         }
     }
 
     public void triggerAudioPanel(String audioHook) {
+        this.triggerAudioPanel(audioHook, false);
+    }
+
+    public void triggerAudioPanel(String audioHook, boolean ignoreIsPlaying) {
+        triggerAudioPanel(audioHook, -1, ignoreIsPlaying);
+    }
+
+    public void triggerAudioPanel(String audioHook, float volume) {
+        this.triggerAudioPanel(audioHook, volume, false);
+    }
+
+    public void triggerAudioPanel(String audioHook, float volume, boolean ignoreIsPlaying) {
         try {
             com.gmt2001.Console.debug.println("triggerAudioPanel: " + audioHook);
+            List<String> audioCandidates = findAvailableAudioCandidates(audioHook.split(",", 2)[0].trim(), "./config/audio-hooks/");
+  
+            if (audioCandidates.isEmpty()) {
+                com.gmt2001.Console.err.println("triggerAudioPanel: no candidates found for: " + audioHook);
+                return;
+            }
             JSONStringer jsonObject = new JSONStringer();
-            jsonObject.object().key("audio_panel_hook").value(audioHook).endObject();
+            jsonObject.object().key("audio_panel_hook").array();
+            audioCandidates.forEach(candiate -> { jsonObject.value(candiate);});
+            jsonObject.endArray()
+                .key("audio_panel_volume").value(volume)
+                .key("ignoreIsPlaying").value(ignoreIsPlaying)
+                .endObject();
+            sendJSONToAll(jsonObject.toString());
+        } catch (JSONException ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
+        }
+    }
+
+    public void alertText(String alertText) {
+        try {
+            com.gmt2001.Console.debug.println("alertText: " + alertText);
+            JSONStringer jsonObject = new JSONStringer();
+            jsonObject.object()
+                    .key("text").value(alertText);
+
+            jsonObject.endObject();
+            sendJSONToAll(jsonObject.toString());
+        } catch (JSONException ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
+        }
+    }
+
+    public void alertText(String alertText, String alertCSS) {
+        try {
+            com.gmt2001.Console.debug.println("alertText: " + alertText);
+            JSONStringer jsonObject = new JSONStringer();
+            jsonObject.object()
+                    .key("text").value(alertText)
+                    .key("css").value(alertCSS);
+
+            jsonObject.endObject();
+            sendJSONToAll(jsonObject.toString());
+        } catch (JSONException ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
+        }
+    }
+
+    public void alertText(String alertText, float alertDuration) {
+        try {
+            com.gmt2001.Console.debug.println("alertText: " + alertText);
+            JSONStringer jsonObject = new JSONStringer();
+            jsonObject.object()
+                    .key("text").value(alertText)
+                    .key("duration").value(alertDuration);
+
+            jsonObject.endObject();
+            sendJSONToAll(jsonObject.toString());
+        } catch (JSONException ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
+        }
+    }
+
+    public void alertText(String alertText, String alertCSS, float alertDuration) {
+        try {
+            com.gmt2001.Console.debug.println("alertText: " + alertText);
+            JSONStringer jsonObject = new JSONStringer();
+            jsonObject.object()
+                    .key("text").value(alertText)
+                    .key("css").value(alertCSS)
+                    .key("duration").value(alertDuration);
+
+            jsonObject.endObject();
+            sendJSONToAll(jsonObject.toString());
+        } catch (JSONException ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
+        }
+    }
+
+    public void stopMedia(){
+        stopMedia("all");
+    }
+    public void stopMedia(String type) {
+        try {
+            JSONStringer jsonObject = new JSONStringer();
+            jsonObject.object()
+                    .key("stopMedia").value(type)
+                    .endObject();
             sendJSONToAll(jsonObject.toString());
         } catch (JSONException ex) {
             com.gmt2001.Console.err.printStackTrace(ex);
@@ -129,13 +212,176 @@ public class WsAlertsPollsHandler implements WsFrameHandler {
     }
 
     public void alertImage(String imageInfo) {
+        this.alertImage(imageInfo, null, false, true);
+    }
+
+    public void alertImage(String imageInfo, String basePath, boolean ignoreIsPlaying, boolean includeAudio) {
+        if (basePath == null) {
+            basePath = "./config/gif-alerts/";
+        }
+
         try {
             com.gmt2001.Console.debug.println("alertImage: " + imageInfo);
             JSONStringer jsonObject = new JSONStringer();
-            jsonObject.object().key("alert_image").value(imageInfo).endObject();
+            jsonObject.object()
+                    .key("alert_image").value(imageInfo)
+                    .key("ignoreIsPlaying").value(ignoreIsPlaying);
+                
+            if (includeAudio){
+                List<String> audioCandidates = findAvailableAudioCandidates(imageInfo.split(",", 2)[0].trim(), basePath);
+
+                if (!audioCandidates.isEmpty()) {
+                    jsonObject.key("audioCandidates").array();
+                    audioCandidates.forEach(candiate -> { jsonObject.value(candiate);});
+                    jsonObject.endArray();
+                }
+            }
+
+            jsonObject.endObject();
             sendJSONToAll(jsonObject.toString());
         } catch (JSONException ex) {
             com.gmt2001.Console.err.printStackTrace(ex);
         }
+    }
+
+    private List<String> findAvailableAudioCandidates(String imageInfo, String basePathString) {
+        imageInfo = FilenameUtils.getBaseName(imageInfo);
+        Path basePath = Path.of(basePathString);
+
+        List<String> found = new ArrayList<>();
+        for (String ext : AUDIO_EXTS) {
+            Path candidate = basePath.resolve(imageInfo + "." + ext);
+            if (Files.exists(candidate) && Files.isRegularFile(candidate)) {
+                found.add(imageInfo + "." + ext);
+            }
+        }
+        return found;
+    }
+
+    public void playVideo(String filename){
+        playVideo(filename, -1, false);
+    }
+    public void playVideo(String filename, int durationMs){
+        playVideo(filename, durationMs, false);
+    }
+
+    public void playVideo(String filename, boolean fullscreen){
+        playVideo(filename, -1, fullscreen);
+    }
+
+    public void playVideo(String filename, int durationMs, boolean fullscreen) {
+        JSONStringer json = new JSONStringer();
+        json.object()
+                .key(KEY_EVENT_TYPE).value("playVideoClip")
+                .key("filename").value(filename)
+                .key("duration").value(durationMs)
+                .key("fullscreen").value(fullscreen)
+                .endObject();
+        this.sendJSONToAll(json.toString());
+    }
+
+    /**
+     * Takes a string to parse and trigger one or more emotes. Each emote entry is separated by a '/'. An emote describes its occurrences in the (here
+     * not relevant) string in simple start-stop notation. Multiple occurrences are separated by a comma.
+     * <p>
+     * This is the default method that handles Twitch style emotes and uses the default emote provider Twitch
+     *
+     * @param emoteString a string in format of Twitch's emote format e.g. "425618:0-2,4-6,8-10/145315:12-24"
+     */
+    public void triggerEmotes(String emoteString) {
+        Map<String, Integer> emotes = Arrays.stream(emoteString.split("/"))
+                .map((singleEmotes -> singleEmotes.split(";")))
+                .collect(Collectors.toMap(strings -> strings[0], strings -> strings[1].split(",").length));
+        emotes.forEach(this::triggerEmote);
+    }
+
+    public void triggerEmotes(String[] emotes, String provider) {
+        for (String emote : emotes) {
+            this.triggerEmote(emote, provider);
+        }
+    }
+
+    public void triggerEmote(String image) {
+        this.triggerEmote(image, "twitch");
+    }
+
+    public void triggerEmote(String image, int amount) {
+        this.triggerEmote(image, amount, "twitch");
+    }
+
+    public void triggerEmote(String image, String provider) {
+        this.triggerEmote(image, 1, provider);
+    }
+
+    public void triggerEmote(String emoteId, int amount, String provider) {
+        this.triggerEmote(emoteId, amount, provider, false);
+    }
+
+    public void triggerEmote(String emoteId, int amount, String provider, String emoteCode) {
+        this.triggerEmote(emoteId, amount, provider, emoteCode, false);
+    }
+
+    public void triggerEmote(String emoteId, int amount, String provider, boolean ignoreSleep) {
+        this.triggerEmote(emoteId, amount, provider, emoteId, ignoreSleep);
+    }
+
+    public void triggerEmote(String emoteId, int amount, String provider, String emoteCode, boolean ignoreSleep) {
+        try {
+            JSONStringer jsonObject = new JSONStringer();
+            jsonObject.object()
+                    .key("emoteId").value(emoteId)
+                    .key("amount").value(amount)
+                    .key("provider").value(provider)
+                    .key("emoteCode").value(emoteCode)
+                    .key("ignoreSleep").value(ignoreSleep)
+                    .endObject();
+            sendJSONToAll(jsonObject.toString());
+        } catch (JSONException ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
+        }
+    }
+
+    public void triggerEmoteAnimation(String emoteId, int amount, String provider, String animationName, int duration, boolean ignoreSleep) {
+        try {
+            JSONStringer jsonObject = new JSONStringer();
+            jsonObject.object()
+                    .key("emoteId").value(emoteId)
+                    .key("amount").value(amount)
+                    .key("provider").value(provider)
+                    .key("duration").value(duration)
+                    .key("animationName").value(animationName)
+                    .key("ignoreSleep").value(ignoreSleep)
+                    .endObject();
+            sendJSONToAll(jsonObject.toString());
+        } catch (JSONException ex) {
+            com.gmt2001.Console.err.printStackTrace(ex);
+        }
+
+    }
+
+    /**
+     * Sends a macro to be played by the alerts overlay
+     *
+     * @param macroJson A json string with commands
+     */
+    public void sendMacro(String macroJson) {
+        sendJSONToAll(macroJson);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(authHandler);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        WsAlertsPollsHandler other = (WsAlertsPollsHandler) obj;
+        return Objects.equals(authHandler, other.authHandler);
     }
 }

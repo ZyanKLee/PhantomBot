@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,7 +48,7 @@
         /*
          * @commandpath lastseen [username] - Find out when the given user was last seen in the channel
          */
-        if (command.equalsIgnoreCase('lastseen')) {
+        if ($.equalsIgnoreCase(command, 'lastseen')) {
             if (target === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('lastseen.usage'));
                 return;
@@ -56,11 +56,13 @@
 
             target = $.user.sanitize(target);
 
-            if ($.inidb.exists('lastseen', target)) {
-                date = new Date(parseInt($.inidb.get('lastseen', target.toLowerCase())));
-                $.say($.whisperPrefix(sender) + $.lang.get('lastseen.response', $.username.resolve(target), date.toLocaleDateString(), date.toLocaleTimeString()));
+            let lastseen = $.optIniDbNumber('lastseen', target.toLowerCase());
+
+            if (lastseen.isPresent()) {
+                date = new Date(lastseen.get());
+                $.say($.whisperPrefix(sender) + $.lang.get('lastseen.response', $.viewer.getByLogin(target).name(), date.toLocaleDateString(), date.toLocaleTimeString()));
             } else {
-                $.say($.whisperPrefix(sender) + $.lang.get('lastseen.404', $.username.resolve(target)));
+                $.say($.whisperPrefix(sender) + $.lang.get('lastseen.404', $.viewer.getByLogin(target).name()));
             }
         }
     });
@@ -69,6 +71,6 @@
      * @event initReady
      */
     $.bind('initReady', function() {
-        $.registerChatCommand('./commands/lastseenCommand.js', 'lastseen', 7);
+        $.registerChatCommand('./commands/lastseenCommand.js', 'lastseen', $.PERMISSION.Viewer);
     });
 })();

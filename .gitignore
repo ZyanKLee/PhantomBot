@@ -39,6 +39,7 @@ Temporary Items
 .apdisk
 bin/
 .vscode/
+.agents/
 
 # Files created by the bot inside resources folder
 resources/bannedUsers.bin
@@ -49,9 +50,6 @@ resources/stdio.txt
 resources/web/default.html
 resources/web/default.txt
 resources/scripts/*
-
-# Do not include the class files for GenerateTwitterTokens
-genTwitterTokens/classes/generatetwittertokens
 
 # IntelliJ Project files
 dist/
@@ -70,6 +68,7 @@ nbproject/
 
 # Libs downloaded from Maven
 lib/
+lib.extra/
 
 # Allow java-runtime files
 !resources/java-runtime*/*

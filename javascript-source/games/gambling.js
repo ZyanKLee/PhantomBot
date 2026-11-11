@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
         winRange = $.getSetIniDbNumber('gambling', 'winRange', 50),
         max = $.getSetIniDbNumber('gambling', 'max', 100),
         min = $.getSetIniDbNumber('gambling', 'min', 5),
+        allowWhenOffline = $.getSetIniDbBoolean('gambling', 'allowWhenOffline', true),
         gain = Math.abs(winGainPercent / 100);
 
     /**
@@ -30,6 +31,7 @@
         winRange = $.getIniDbNumber('gambling', 'winRange');
         max = $.getIniDbNumber('gambling', 'max');
         min = $.getIniDbNumber('gambling', 'min');
+        allowWhenOffline = $.getIniDbBoolean('gambling', 'allowWhenOffline'),
         gain = Math.abs(winGainPercent / 100);
     }
 
@@ -79,19 +81,32 @@
         /**
          * @commandpath gamble [amount] - Gamble your points.
          */
-        if (command.equalsIgnoreCase('gamble')) {
-            if (!parseInt(action)) {
-                $.say($.whisperPrefix(sender) + $.lang.get('gambling.usage'));
+        if ($.equalsIgnoreCase(command, 'gamble')) {
+            if (!allowWhenOffline && !$.isOnline($.channelName)) {
+                $.say($.whisperPrefix(sender) + $.lang.get('gambling.allowwhenoffline.disabled'));
                 return;
             }
 
-            gamble(sender, parseInt(action));
+            var points;
+            if ($.equalsIgnoreCase(action, "all") || $.equalsIgnoreCase(action, "allin") || $.equalsIgnoreCase(action, "all-in")){
+                points = $.getUserPoints(sender);
+            } else if ($.equalsIgnoreCase(action, "half")){
+                points = Math.floor($.getUserPoints(sender) / 2);
+            } else if (isNaN(parseInt(action))) {
+                $.say($.whisperPrefix(sender) + $.lang.get('gambling.usage'));
+                return;
+            } else {
+                points = parseInt(action);
+            }
+
+            gamble(sender, points);
+            return;
         }
 
         /**
          * @commandpath gamblesetmax [amount] - Set how many points people can gamble.
          */
-        if (command.equalsIgnoreCase('gamblesetmax')) {
+        if ($.equalsIgnoreCase(command, 'gamblesetmax')) {
             if (action === undefined || isNaN(parseInt(action)) || action < 1) {
                 $.say($.whisperPrefix(sender) + $.lang.get('gambling.set.max.usage'));
                 return;
@@ -104,7 +119,7 @@
         /**
          * @commandpath gamblesetmin [amount] - Set the minumum amount of points people can gamble.
          */
-        if (command.equalsIgnoreCase('gamblesetmin')) {
+        if ($.equalsIgnoreCase(command, 'gamblesetmin')) {
             if (action === undefined || isNaN(parseInt(action)) || action < 1) {
                 $.say($.whisperPrefix(sender) + $.lang.get('gambling.set.min.usage'));
                 return;
@@ -117,7 +132,7 @@
         /**
          * @commandpath gamblesetwinningrange [range] - Set the winning range from 0-100.
          */
-        if (command.equalsIgnoreCase('gamblesetwinningrange')) {
+        if ($.equalsIgnoreCase(command, 'gamblesetwinningrange')) {
             if (action === undefined || isNaN(parseInt(action)) || action.includes('-') || action < 1 || action > 100) {
                 $.say($.whisperPrefix(sender) + $.lang.get('gambling.win.range.usage'));
                 return;
@@ -130,8 +145,8 @@
         /**
          * @commandpath gamblesetgainpercent [amount in percent] - Set the winning gain percent.
          */
-        if (command.equalsIgnoreCase('gamblesetgainpercent')) {
-            if (action === undefined || isNaN(parseInt(action)) || action < 1 || action > 100) {
+        if ($.equalsIgnoreCase(command, 'gamblesetgainpercent')) {
+            if (action === undefined || isNaN(parseInt(action)) || action < 1) {
                 $.say($.whisperPrefix(sender) + $.lang.get('gambling.percent.usage'));
                 return;
             }
@@ -139,14 +154,24 @@
             $.inidb.set('gambling', 'winGainPercent', winGainPercent);
             $.say($.whisperPrefix(sender) + $.lang.get('gambling.percent', winGainPercent));
         }
+
+        /**
+         * @commandpath gambleoffline - Toggle allowing gambling when the channel is offline
+         */
+        if ($.equalsIgnoreCase(command, 'gambleoffline')) {
+            allowWhenOffline = !allowWhenOffline;
+            $.setIniDbBoolean('gambling', 'allowWhenOffline', allowWhenOffline);
+            $.say($.whisperPrefix(sender) + (allowWhenOffline ? $.lang.get('gambling.allowwhenoffline.enabled') : $.lang.get('gambling.allowwhenoffline.disabled')));
+        }
     });
 
     $.bind('initReady', function() {
-        $.registerChatCommand('./games/gambling.js', 'gamble', 7);
-        $.registerChatCommand('./games/gambling.js', 'gamblesetmax', 1);
-        $.registerChatCommand('./games/gambling.js', 'gamblesetmin', 1);
-        $.registerChatCommand('./games/gambling.js', 'gamblesetwinningrange', 1);
-        $.registerChatCommand('./games/gambling.js', 'gamblesetgainpercent', 1);
+        $.registerChatCommand('./games/gambling.js', 'gamble', $.PERMISSION.Viewer);
+        $.registerChatCommand('./games/gambling.js', 'gamblesetmax', $.PERMISSION.Admin);
+        $.registerChatCommand('./games/gambling.js', 'gamblesetmin', $.PERMISSION.Admin);
+        $.registerChatCommand('./games/gambling.js', 'gamblesetwinningrange', $.PERMISSION.Admin);
+        $.registerChatCommand('./games/gambling.js', 'gamblesetgainpercent', $.PERMISSION.Admin);
+        $.registerChatCommand('./games/gambling.js', 'gambleoffline', $.PERMISSION.Admin);
     });
 
     $.reloadGamble = reloadGamble;

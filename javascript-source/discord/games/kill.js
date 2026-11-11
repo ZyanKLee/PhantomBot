@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -81,7 +81,7 @@
         /**
          * @discordcommandpath kill [username] - Kill a fellow viewer (not for real!).
          */
-        if (command.equalsIgnoreCase('kill')) {
+        if ($.equalsIgnoreCase(command, 'kill')) {
             if (args.length === 0) {
                 selfKill(sender, channel);
             } else {
@@ -91,9 +91,9 @@
     });
 
     /**
-     * @event initReady
+     * @event discordReady
      */
-    $.bind('initReady', function() {
+    $.bind('discordReady', function() {
         $.discord.registerCommand('./discord/games/kill.js', 'kill', 0);
 
         if (otherMessageCount === 0 && selfMessageCount === 0) {

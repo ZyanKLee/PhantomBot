@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,12 @@
  */
 package com.gmt2001.httpwsserver;
 
-import static com.gmt2001.httpwsserver.WebSocketFrameHandler.ATTR_URI;
+import static com.gmt2001.httpwsserver.WebSocketFrameHandler.ATTR_ALLOW_NON_SSL;
+
+import java.util.List;
+
+import org.json.JSONStringer;
+
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.QueryStringDecoder;
@@ -24,8 +29,6 @@ import io.netty.handler.codec.http.websocketx.WebSocketCloseStatus;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler.HandshakeComplete;
 import io.netty.util.ReferenceCountUtil;
-import java.util.List;
-import org.json.JSONStringer;
 
 /**
  * Processes WebSocket frames and passes successful ones to the appropriate registered final handler
@@ -34,7 +37,7 @@ import org.json.JSONStringer;
  */
 public class WsSslErrorHandler extends SimpleChannelInboundHandler<WebSocketFrame> {
 
-    private static final List<String> ALLOWNONSSLPATHS = List.of("/ws/alertspolls");
+    public static final List<String> ALLOWNONSSLPATHS = List.of("/ws/alertspolls");
 
     WsSslErrorHandler() {
         super();
@@ -44,19 +47,16 @@ public class WsSslErrorHandler extends SimpleChannelInboundHandler<WebSocketFram
      * Handles incoming WebSocket frames and passes them to the appropriate {@link WsFrameHandler}
      *
      * @param ctx The {@link ChannelHandlerContext} of the session
-     * @param req The {@link WebSocketFrame} containing the request frame
+     * @param frame The {@link WebSocketFrame} containing the request frame
      * @throws Exception Passes any thrown exceptions up the stack
      */
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame frame) throws Exception {
-        QueryStringDecoder qsd = new QueryStringDecoder(ctx.channel().attr(ATTR_URI).get());
-            for (String u : ALLOWNONSSLPATHS) {
-                if (qsd.path().startsWith(u)) {
-                    ReferenceCountUtil.retain(frame);
-                    ctx.fireChannelRead(frame);
-                    return;
-                }
-            }
+        if (ctx.channel().attr(ATTR_ALLOW_NON_SSL).get().equals("true")) {
+            ReferenceCountUtil.retain(frame);
+            ctx.fireChannelRead(frame);
+            return;
+        }
     }
 
     /**
@@ -70,15 +70,24 @@ public class WsSslErrorHandler extends SimpleChannelInboundHandler<WebSocketFram
      */
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
-        if (evt instanceof HandshakeComplete) {
-            HandshakeComplete hc = (HandshakeComplete) evt;
-            QueryStringDecoder qsd = new QueryStringDecoder(hc.requestUri());
-            for (String u : ALLOWNONSSLPATHS) {
-                if (qsd.path().startsWith(u)) {
-                    ctx.fireUserEventTriggered(evt);
-                    return;
+        if (evt instanceof HandshakeComplete hc) {
+            boolean allowNonSsl = hc.requestHeaders().contains(HTTPWSServer.HEADER_X_FORWARDED_HOST) || hc.requestHeaders().contains(HTTPWSServer.HEADER_CF_RAY);
+
+            if (!allowNonSsl) {
+                QueryStringDecoder qsd = new QueryStringDecoder(hc.requestUri());
+                for (String u : ALLOWNONSSLPATHS) {
+                    if (qsd.path().startsWith(u)) {
+                        allowNonSsl = true;
+                        break;
+                    }
                 }
             }
+
+            if (allowNonSsl) {
+                ctx.fireUserEventTriggered(evt);
+                return;
+            }
+
             JSONStringer jsonObject = new JSONStringer();
             jsonObject.object().key("errors").array().object()
                     .key("status").value("426")

@@ -9,7 +9,7 @@ It's very global, so you might need to take some extra steps to get it to work f
 
 1. Fork the [PhantomBot repository](https://github.com/PhantomBot/PhantomBot).
 2. Check out your fork and open it in your favorite IDE.
-2. Set the project Java SDK to [11.0.4](http://www.oracle.com/technetwork/java/javase/overview/index.html).
+2. Set the project Java SDK to [17](http://www.oracle.com/technetwork/java/javase/overview/index.html).
 3. Import `build.xml` into your [ANT](http://ant.apache.org/) task manager.
 
 DONE! Happy coding <3
@@ -21,7 +21,7 @@ You can get JetBrains IntelliJ [here](https://www.jetbrains.com/idea/).
 1. Fork the [PhantomBot repository](https://github.com/PhantomBot/PhantomBot).
 2. Open up IntelliJ, so you have the start screen.  
   From there you can check out (Check out from Version Control) your fork and open it up.
-3. Open up a file from `./source/` where IntelliJ will ask you for a project SDK. Use SDK [11.0.4](http://www.oracle.com/technetwork/java/javase/overview/index.html).
+3. Open up a file from `./source/` where IntelliJ will ask you for a project SDK. Use SDK [17](http://www.oracle.com/technetwork/java/javase/overview/index.html).
 4. Next up mark the directories `./source` and `./javascript-source` as "Sources Root".  
   *"Mark Directory As" in the context menu.*
 5. Import `build.xml` into the ANT task manager.  
@@ -43,7 +43,7 @@ You can get Netbeans [here](https://netbeans.org/downloads/).
 8. Click on the first *"Browse"* button. Select the directory you cloned to and 
   click *"Open"*. Then enter a project name. Click 2 times next. 
 9. Press the first *"Add Folder"* button and select the *"javascript-source"* folder.
-  Set the *"Source Level"* to *"JDK 1.8"* and the *"Encoding"* to *"UTF-8"*. Next page! 
+  Set the *"Source Level"* to *"JDK 17"* and the *"Encoding"* to *"UTF-8"*. Next page! 
 10. Click on *"Add JAR/Folder"*, go the `./libraries` folder and select every jar file (Ctrl + A). 
   Press the "Finish" button and we're finished!
 
@@ -63,5 +63,19 @@ You can get Eclipse [here](https://www.eclipse.org/downloads/).
 9. Select or type filter text *"Java Project from Existing Ant Buildfile"*. **Next** page!
 10. Click **Browse** to select `build.xml` from destination folder. Also mark *Link to the buildfile in the file system*. Press **Finish**
   `./libraries` has been automatically imported to *Referenced Libraries*.
+
+## Visual Studio Code - Dev Container
+You can get Visual Studio Code [here](https://code.visualstudio.com/).
+Using Dev Containers also requires that you have Docker installed, full guide to getting started with Dev Containers is [here](https://code.visualstudio.com/docs/devcontainers/tutorial).
+
+1. Fork the [PhantomBot repository](https://github.com/PhantomBot/PhantomBot).
+2. Check out your fork and open it in Visual Studio Code.
+3. Run the `Dev Containers: Open Folder in Container...` command from the Command Palette (F1) or quick actions Status bar item.
+4. Wait for the container to download and configure.
+5. Once the container is running, open up a terminal.
+6. Use the command `make build` to build PhantomBot (builds into the folder 'dist/PhantomBot-custom').
+7. Use the command `make run` to start your newly built PhantomBot instance. You should be prompted to open up PhantomBot in a browser. If not, open a browser and enter the URL `https://localhost:25000/`.
+8. To stop PhantomBot, kill the process in the terminal with the keyboard command 'Ctrl+C'. If your instance of PhantomBot has crashed and is running as a zombie process, open a new terminal in the devcontainer and run the command `make kill`.
+9. If you need to quickly rebuild PhantomBot and start the process, the command `make rebuild` will build and run PhantomBot.
 
 DONE! Happy coding <3

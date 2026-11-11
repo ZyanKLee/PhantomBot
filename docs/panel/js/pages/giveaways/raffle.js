@@ -1,5 +1,5 @@
-3/*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+/*
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,10 +15,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* global toastr */
+
 // Function that querys all of the data we need.
 $(run = function () {
     socket.getDBValues('raffle_module_status_toggle', {
-        tables: ['modules', 'raffleSettings'],
+        tables: ['modules', 'raffleState'],
         keys: ['./systems/raffleSystem.js', 'isActive']
     }, true, function (e) {
         if (!helpers.handleModuleLoadUp(['raffleListModule', 'raffleModal'], e['./systems/raffleSystem.js'], 'raffleModuleToggle')) {
@@ -28,7 +30,7 @@ $(run = function () {
         }
 
         // Update the open button to close if the raffle is active.
-        if (e['isActive'] === 'true') {
+        if (helpers.isTrue(e['isActive'])) {
             $('#open-or-close-raffle').html($('<i/>', {
                 'class': 'fa fa-lock'
             })).append('&nbsp; Close').removeClass('btn-success').addClass('btn-warning');
@@ -39,24 +41,60 @@ $(run = function () {
          */
         helpers.temp.loadRaffleList = function () {
             socket.getDBTableValues('get_raffle_list', 'raffleList', function (results) {
-                const table = $('#raffle-table');
+                socket.getDBValues('get_raffle_hasDrawn', {
+                    tables: ['raffleState', 'raffleState', 'raffleresults', 'raffleSettings'],
+                    keys: ['hasDrawn', 'isActive', 'winner', 'noRepickSame']
+                }, true, function (e) {
+                    const table = $('#raffle-table');
+                    var hasDrawn = false,
+                            length = results.length;
 
-                // Remove current data content.
-                table.find('tr:gt(0)').remove();
+                    if (length === 0) {
+                        // No entries disallow drawing winners
+                        $('#draw-raffle').prop('disabled', true);
+                    } else {
+                        $('#draw-raffle').prop('disabled', false);
+                    }
 
-                for (let i = 0; i < results.length; i++) {
-                    const tr = $('<tr/>');
+                    if (e['hasDrawn'] !== undefined) {
+                        hasDrawn = helpers.isTrue(e['hasDrawn']);
+                        if (hasDrawn) {
+                            var winners = JSON.parse(e['winner']);
+                            length = (length < winners.length) ? winners.length : length;
+                        }
+                    }
 
-                    tr.append($('<td/>', {
-                        'html': results[i].key
-                    }));
+                    //Update Buttons
+                    if (helpers.isTrue(e['isActive'])) {
+                        $('#open-or-close-raffle').html($('<i/>', {
+                            'class': 'fa fa-lock'
+                        })).append('&nbsp; Close').removeClass('btn-success').addClass('btn-warning');
+                    } else {
+                        $('#open-or-close-raffle').html($('<i/>', {
+                            'class': 'fa fa-unlock-alt'
+                        })).append('&nbsp; Open').removeClass('btn-warning').addClass('btn-success');
+                    }
 
-                    table.append(tr);
-                }
+                    // Remove current data content.
+                    table.find('tr:gt(0)').remove();
+
+                    for (let i = 0; i < length; i++) {
+                        const tr = $('<tr/>');
+
+                        tr.append($('<td/>', {
+                            'html': ((i < results.length && results[i] !== undefined) ? results[i].key : '')
+                        }))
+                                .append($('<td/>', {
+                                    'html': ((hasDrawn && i < winners.length && winners[i] !== undefined) ? winners[i] : '')
+                                }));
+
+                        table.append(tr);
+                    }
+                });
             });
         };
 
-        if (location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
+        if (helpers.canEmbedTwitch()) {
             // Add Twitch chat.
             $('#raffle-chat').html($('<iframe/>', {
                 'frameborder': '0',
@@ -65,7 +103,7 @@ $(run = function () {
                 'src': 'https://www.twitch.tv/embed/' + getChannelName() + '/chat' + (helpers.isDark ? '?darkpopout&' : '?') + 'parent=' + location.hostname
             }));
         } else {
-            $('#raffle-chat').html('Due to changes by Twitch, the chat panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
+            $('#raffle-chat').html(helpers.CANT_EMBED_TWITCH_TEXT);
             $('#raffle-chat').addClass('box-body');
         }
 
@@ -94,15 +132,15 @@ $(function () {
         } else {
             $('#raffle-cost-title').html('Cost');
         }
-    })
+    });
 
     // Open/close raffle button.
     $('#open-or-close-raffle').on('click', function () {
         if ($(this)[0].innerText.trim() === 'Open') {
-            const keyword = $('#raffle-keyword'),
+            const   keyword = $('#raffle-keyword'),
                     cost = $('#raffle-cost'),
                     costType = $('#raffle-req').val(),
-                    elegibility = $('#raffle-perm').val(),
+                    eligibility = $('#raffle-perm').val(),
                     timer = $('#raffle-timer'),
                     regLuck = $('#raffle-reg'),
                     subLuck = $('#raffle-sub');
@@ -112,8 +150,8 @@ $(function () {
                 case helpers.handleInputString(keyword):
                 case helpers.handleInputNumber(cost, 0):
                 case helpers.handleInputNumber(timer, 0):
-                case helpers.handleInputNumber(regLuck, 1, 10):
-                case helpers.handleInputNumber(subLuck, 1, 10):
+                case helpers.handleInputNumber(regLuck, 0, 10):
+                case helpers.handleInputNumber(subLuck, 0, 10):
                     break;
                 default:
                     socket.updateDBValues('update_raffle_settings', {
@@ -123,7 +161,7 @@ $(function () {
                     }, function () {
                         socket.sendCommandSync('raffle_reload', 'reloadraffle', function () {
                             socket.sendCommand('open_raffle_cmd', 'raffle open ' + cost.val() + ' ' + keyword.val() +
-                                    ' ' + timer.val() + ' ' + costType + ' ' + elegibility, function () {
+                                    ' ' + timer.val() + ' ' + costType + ' ' + eligibility, function () {
                                 // Alert the user.
                                 toastr.success('Successfully opened the raffle!');
                                 // Update the button.
@@ -131,31 +169,40 @@ $(function () {
                                     'class': 'fa fa-lock'
                                 })).append('&nbsp; Close').removeClass('btn-success').addClass('btn-warning');
                             });
-                        })
+                        });
                     });
             }
         } else {
             socket.sendCommandSync('close_raffle_cmd', 'raffle close', function () {
                 // Alert the user.
                 toastr.success('Successfully closed the raffle!');
-                // Reload to remove the winner.
-                helpers.temp.loadRaffleList();
                 // Update the button.
                 $('#open-or-close-raffle').html($('<i/>', {
                     'class': 'fa fa-unlock-alt'
                 })).append('&nbsp; Open').removeClass('btn-warning').addClass('btn-success');
+                // Reload to remove the winner.
+                helpers.temp.loadRaffleList();
             });
         }
     });
 
     // Draw raffle button.
     $('#draw-raffle').on('click', function () {
-        socket.sendCommandSync('draw_raffle_cmd', 'raffle draw', function () {
-            // Alert the user.
-            toastr.success('Successfully drew a winner!');
-            // Reload to remove the winner.
-            helpers.temp.loadRaffleList();
-        });
+        const   drawAmount = $('#raffle-draw'),
+                prize = $('#raffle-prize');
+
+        switch (false) {
+            case helpers.handleInputNumber(drawAmount, 1):
+            case helpers.handleInputNumber(prize, 0):
+                break;
+            default:
+                socket.sendCommandSync('draw_raffle_cmd', 'raffle draw ' + drawAmount.val() + ' ' + prize.val(), function () {
+                    // Alert the user.
+                    toastr.success('Successfully drew ' + drawAmount.val() + ' winner' + (drawAmount.val() === 1 ? '' : 's') + '!');
+                    // Reload
+                    helpers.temp.loadRaffleList();
+                });
+        }
     });
 
     // Reset raffle button.
@@ -167,6 +214,8 @@ $(function () {
         $('#raffle-req').val('-usepoints');
         $('#raffle-reg, #raffle-sub').val('1');
         $('#raffle-table').find('tr:gt(0)').remove();
+        $('#raffle-draw').val('1');
+        $('#raffle-prize').val('0');
 
         $('#open-or-close-raffle').html($('<i/>', {
             'class': 'fa fa-unlock-alt'
@@ -181,8 +230,8 @@ $(function () {
     // Raffle settings button.
     $('#raffle-settings').on('click', function () {
         socket.getDBValues('get_raffle_settings', {
-            tables: ['raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings'],
-            keys: ['raffleMSGToggle', 'raffleWhisperWinner', 'noRepickSame', 'raffleMessage', 'raffleMessageInterval']
+            tables: ['raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings'],
+            keys: ['raffleMSGToggle', 'raffleOpenDraw', 'raffleWhisperWinner', 'noRepickSame', 'raffleMessage', 'raffleMessageInterval']
         }, true, function (e) {
             helpers.getModal('raffle-settings-modal', 'Raffle Settings', 'Save', $('<form/>', {
                 'role': 'form'
@@ -206,18 +255,21 @@ $(function () {
                             .append(helpers.getCollapsibleAccordion('main-2', 'Extra Settings', $('<form/>', {
                                 'role': 'form'
                             })
+                                    .append(helpers.getDropdownGroup('opendraw', 'Don\'t Close On Draw', (helpers.isTrue(e['raffleOpenDraw']) ? 'Yes' : 'No'), ['Yes', 'No'],
+                                            'If disabled, the raffle will close automatically when drawing winners.'))
                                     // Add toggle for warning messages.
-                                    .append(helpers.getDropdownGroup('warning-msg', 'Enable Warning Messages', (e['raffleMSGToggle'] === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('warning-msg', 'Enable Warning Messages', (helpers.isTrue(e['raffleMSGToggle']) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If warning messages should be said in chat when a user already entered, or doesn\'t have enough points.'))
                                     // Add toggle for repicks
-                                    .append(helpers.getDropdownGroup('draw-toggle', 'Allow Multiple Draws', (e['noRepickSame'] === 'false' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('draw-toggle', 'Allow Multiple Draws', (helpers.isTrue(e['noRepickSame']) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If a user can be drawn multiple times for one raffle.'))
                                     // Add toggle for repicks
-                                    .append(helpers.getDropdownGroup('whisper-toggle', 'Whisper The Winner', (e['raffleWhisperWinner'] === 'true' ? 'Yes' : 'No'), ['Yes', 'No'],
+                                    .append(helpers.getDropdownGroup('whisper-toggle', 'Whisper The Winner', (helpers.isTrue(e['raffleWhisperWinner']) ? 'Yes' : 'No'), ['Yes', 'No'],
                                             'If the winner of the raffle should get a whisper saying they won.'))))),
                     function () {
                         let raffleTimer = $('#msg-timer'),
                                 raffleMessage = $('#msg-msg'),
+                                openDraw = $('#opendraw').find(':selected').text() === 'Yes',
                                 warningMsg = $('#warning-msg').find(':selected').text() === 'Yes',
                                 drawToggle = $('#draw-toggle').find(':selected').text() !== 'Yes',
                                 whisperWinner = $('#whisper-toggle').find(':selected').text() === 'Yes';
@@ -228,9 +280,9 @@ $(function () {
                                 break;
                             default:
                                 socket.updateDBValues('update_raffle_settings_2', {
-                                    tables: ['raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings'],
-                                    keys: ['raffleMSGToggle', 'raffleWhisperWinner', 'noRepickSame', 'raffleMessage', 'raffleMessageInterval'],
-                                    values: [warningMsg, whisperWinner, drawToggle, raffleMessage.val(), raffleTimer.val()]
+                                    tables: ['raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings', 'raffleSettings'],
+                                    keys: ['raffleMSGToggle', 'raffleOpenDraw', 'raffleWhisperWinner', 'noRepickSame', 'raffleMessage', 'raffleMessageInterval'],
+                                    values: [warningMsg, openDraw, whisperWinner, drawToggle, raffleMessage.val(), raffleTimer.val()]
                                 }, function () {
                                     socket.sendCommand('raffle_reload_cmd', 'reloadraffle', function () {
                                         // Close the modal.

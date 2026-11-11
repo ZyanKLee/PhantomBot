@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,8 @@ import com.gmt2001.httpwsserver.WebSocketFrameHandler;
 import com.gmt2001.httpwsserver.WsFrameHandler;
 import com.gmt2001.httpwsserver.auth.WsAuthenticationHandler;
 import com.gmt2001.httpwsserver.auth.WsSharedRWTokenAuthenticationHandler;
+import com.gmt2001.util.concurrent.ExecutorService;
+
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
@@ -28,12 +30,13 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketCloseStatus;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.util.AttributeKey;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
-import java.util.Calendar;
-import java.util.Date;
+import java.util.Objects;
 import java.util.Queue;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -57,6 +60,7 @@ import tv.phantombot.event.ytplayer.YTPlayerSongRequestEvent;
 import tv.phantombot.event.ytplayer.YTPlayerStateEvent;
 import tv.phantombot.event.ytplayer.YTPlayerStealSongEvent;
 import tv.phantombot.event.ytplayer.YTPlayerVolumeEvent;
+import tv.phantombot.panel.PanelUser.PanelUser;
 
 /**
  *
@@ -65,32 +69,32 @@ import tv.phantombot.event.ytplayer.YTPlayerVolumeEvent;
 public class WsYTHandler implements WsFrameHandler {
 
     private static final AttributeKey<Boolean> ATTR_IS_PLAYER = AttributeKey.valueOf("isPlayer");
-    private static final AttributeKey<Date> ATTR_LAST_PONG = AttributeKey.valueOf("lastPong");
-    private static final String[] ALLOWED_DB_QUERY_TABLES = new String[]{"modules", "ytSettings", "yt_playlists_registry"};
+    private static final AttributeKey<Instant> ATTR_LAST_PONG = AttributeKey.valueOf("lastPong");
+    private static final AttributeKey<Boolean> ATTR_CLOSE_ATTACHED = AttributeKey.valueOf("closeAttached");
+    private static final String[] ALLOWED_DB_QUERY_TABLES = new String[]{"ytSettings", "yt_playlists_registry"};
     private static final String[] ALLOWED_DB_UPDATE_TABLES = new String[]{"ytSettings"};
     private final WsAuthenticationHandler authHandler;
     private int currentVolume;
     private int currentState = -10;
     private boolean clientConnected;
+    private String k = null;
     private int bufferCounter;
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
     public WsYTHandler(String ytAuthRO, String ytAuth) {
         authHandler = new WsSharedRWTokenAuthenticationHandler(ytAuthRO, ytAuth, 10);
-        executor.scheduleAtFixedRate(() -> {
+        ExecutorService.scheduleAtFixedRate(() -> {
             Queue<Channel> channels = WebSocketFrameHandler.getWsSessions("/ws/ytplayer");
-            Calendar cal = Calendar.getInstance();
-            cal.add(Calendar.SECOND, -12);
+            Instant valid = Instant.now().minusSeconds(12);
 
             channels.forEach((c) -> {
-                if (c.attr(ATTR_LAST_PONG).get().before(cal.getTime())) {
-                    c.writeAndFlush(WebSocketFrameHandler.prepareCloseWebSocketFrame(WebSocketCloseStatus.POLICY_VIOLATION));
+                if (c.attr(ATTR_LAST_PONG).get().isBefore(valid)) {
+                    WebSocketFrameHandler.sendWsFrame(c, null, WebSocketFrameHandler.prepareCloseWebSocketFrame(WebSocketCloseStatus.POLICY_VIOLATION));
                     c.close();
                 } else {
                     JSONStringer jsonObject = new JSONStringer();
 
                     jsonObject.object().key("ping").value("ping").endObject();
-                    c.writeAndFlush(WebSocketFrameHandler.prepareTextWebSocketResponse(jsonObject.toString()));
+                    WebSocketFrameHandler.sendWsFrame(c, null, WebSocketFrameHandler.prepareTextWebSocketResponse(jsonObject.toString()));
                 }
             });
         }, 3, 3, TimeUnit.SECONDS);
@@ -110,31 +114,50 @@ public class WsYTHandler implements WsFrameHandler {
     @Override
     public void handleFrame(ChannelHandlerContext ctx, WebSocketFrame frame) {
         ctx.channel().attr(ATTR_IS_PLAYER).setIfAbsent(Boolean.FALSE);
-        ctx.channel().attr(ATTR_LAST_PONG).setIfAbsent(new Date());
+        ctx.channel().attr(ATTR_LAST_PONG).setIfAbsent(Instant.now());
+        ctx.channel().attr(ATTR_CLOSE_ATTACHED).setIfAbsent(Boolean.FALSE);
 
-        ctx.channel().closeFuture().addListener((ChannelFutureListener) (ChannelFuture f) -> {
-            if (f.channel().attr(ATTR_IS_PLAYER).get()) {
-                clientConnected = false;
-                EventBus.instance().postAsync(new YTPlayerDisconnectEvent());
-            }
-        });
+        if (ctx.channel().attr(ATTR_CLOSE_ATTACHED).get() == Boolean.FALSE) {
+            ctx.channel().attr(ATTR_CLOSE_ATTACHED).set(Boolean.TRUE);
+            ctx.channel().closeFuture().addListener((ChannelFutureListener) (ChannelFuture f) -> {
+                if (f.channel().attr(ATTR_IS_PLAYER).get()) {
+                    clientConnected = false;
+                    EventBus.instance().postAsync(new YTPlayerDisconnectEvent());
+                }
+            });
+        }
 
-        if (frame instanceof TextWebSocketFrame) {
+        if (frame instanceof TextWebSocketFrame tframe) {
+            PanelUser user = ctx.channel().attr(WsSharedRWTokenAuthenticationHandler.ATTR_AUTH_USER).get();
             if (clientConnected && !ctx.channel().attr(ATTR_IS_PLAYER).get() && !ctx.channel().attr(WsSharedRWTokenAuthenticationHandler.ATTR_IS_READ_ONLY).get()) {
-                JSONStringer jso = new JSONStringer();
-                WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jso.object().key("secondconnection").value(true).endObject().toString()));
-                ctx.close();
+                JSONObject jsoo = new JSONObject(tframe.text());
+                if (this.k != null && jsoo.has("authenticate") && jsoo.has("k") && !jsoo.isNull("k") && jsoo.getString("k").equals(this.k)) {
+                    WebSocketFrameHandler.getWsSessions("/ws/ytplayer").forEach((c) -> {
+                        if (c.attr(ATTR_IS_PLAYER).get()) {
+                            WebSocketFrameHandler.sendWsFrame(c, null, WebSocketFrameHandler.prepareCloseWebSocketFrame(WebSocketCloseStatus.POLICY_VIOLATION));
+                            c.close();
+                        }
+                    });
+                    Mono.delay(Duration.ofSeconds(1)).block();
+                    JSONStringer jsonObject = new JSONStringer();
+                    WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jsonObject.object().key("ping").value("ping").endObject().toString()));
+                } else {
+                    JSONStringer jso = new JSONStringer();
+                    WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jso.object().key("secondconnection").value(true).endObject().toString()));
+                    ctx.close();
+                }
                 return;
-            } else if (!clientConnected && ctx.channel().attr(WsSharedRWTokenAuthenticationHandler.ATTR_IS_READ_ONLY).get()) {
+            } else if (!clientConnected && ctx.channel().attr(WsSharedRWTokenAuthenticationHandler.ATTR_IS_READ_ONLY).get() && (user == null || !user.isConfigUser())) {
                 return;
             } else if (!clientConnected) {
                 boolean hasYTKey = !PhantomBot.instance().isYouTubeKeyEmpty();
+                this.k = PhantomBot.generateRandomString(12, false);
                 JSONStringer jso = new JSONStringer();
-                WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jso.object().key("ytkeycheck").value(hasYTKey).endObject().toString()));
+                WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jso.object().key("ytkeycheck").value(hasYTKey).key("k").value(this.k).endObject().toString()));
 
                 if (!hasYTKey) {
                     com.gmt2001.Console.err.println("A YouTube API key has not been configured. Please review the instructions in the guides at "
-                            + "https://phantombot.github.io/PhantomBot/");
+                            + "https://phantombot.dev/");
                     return;
                 }
 
@@ -142,8 +165,6 @@ public class WsYTHandler implements WsFrameHandler {
                 ctx.channel().attr(ATTR_IS_PLAYER).set(Boolean.TRUE);
                 EventBus.instance().postAsync(new YTPlayerConnectEvent());
             }
-
-            TextWebSocketFrame tframe = (TextWebSocketFrame) frame;
 
             JSONObject jso;
 
@@ -305,7 +326,13 @@ public class WsYTHandler implements WsFrameHandler {
                 com.gmt2001.Console.err.logStackTrace(ex);
             }
         } else if (jso.has("pong")) {
-            ctx.channel().attr(ATTR_LAST_PONG).set(new Date());
+            ctx.channel().attr(ATTR_LAST_PONG).set(Instant.now());
+        } else if (jso.has("is_module_enabled")) {
+            try {
+                handleIsModuleEnabled(ctx, frame, jso.getString("query_id"));
+            } catch (JSONException ex) {
+                com.gmt2001.Console.err.logStackTrace(ex);
+            }
         }
     }
 
@@ -328,6 +355,17 @@ public class WsYTHandler implements WsFrameHandler {
         WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jsonObject.toString()));
     }
 
+    public void handleIsModuleEnabled(ChannelHandlerContext ctx, WebSocketFrame frame, String id) throws JSONException {
+        JSONStringer jsonObject = new JSONStringer();
+
+        jsonObject.object().key("query_id").value(id);
+
+        jsonObject.key("enabled").value(PhantomBot.instance().getDataStore().get("modules", "./systems/youtubePlayer.js"));
+        jsonObject.endObject();
+
+        WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jsonObject.toString()));
+    }
+
     public void handleDBUpdate(ChannelHandlerContext ctx, WebSocketFrame frame, String id, String table, String key, String value) throws JSONException {
         if (!Arrays.stream(ALLOWED_DB_UPDATE_TABLES).anyMatch(t -> t.equals(table))) {
             return;
@@ -336,7 +374,7 @@ public class WsYTHandler implements WsFrameHandler {
         JSONStringer jsonObject = new JSONStringer();
         PhantomBot.instance().getDataStore().set(table, key, value);
 
-        EventBus.instance().post(new CommandEvent(PhantomBot.instance().getBotName(), "reloadyt", ""));
+        EventBus.instance().postAsync(new CommandEvent(PhantomBot.instance().getBotName(), "reloadyt", ""));
         jsonObject.object().key("query_id").value(id).endObject();
         WebSocketFrameHandler.sendWsFrame(ctx, frame, WebSocketFrameHandler.prepareTextWebSocketResponse(jsonObject.toString()));
     }
@@ -349,7 +387,7 @@ public class WsYTHandler implements WsFrameHandler {
         this.currentState = currentState;
     }
 
-    public void play(String youtubeID, String songTitle, String duration, String requester) throws JSONException {
+    public void play(String youtubeID, String songTitle, String duration, String requester, int index) throws JSONException {
         JSONStringer jso = new JSONStringer();
 
         jso.object();
@@ -359,6 +397,7 @@ public class WsYTHandler implements WsFrameHandler {
         jso.key("duration").value(duration);
         jso.key("title").value(songTitle);
         jso.key("requester").value(requester);
+        jso.key("index").value(index);
         jso.endObject();
         jso.endObject();
         sendJSONToAll(jso.toString());
@@ -391,6 +430,24 @@ public class WsYTHandler implements WsFrameHandler {
     }
 
     public void sendJSONToAll(String jsonString) {
-        WebSocketFrameHandler.broadcastWsFrame("/ws/ytplayer", WebSocketFrameHandler.prepareTextWebSocketResponse(jsonString));
+        WebSocketFrameHandler.broadcastWsFrame("/ws/ytplayer", WebSocketFrameHandler.prepareTextWebSocketResponse(jsonString), true);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(authHandler, currentState, clientConnected, bufferCounter);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null)
+            return false;
+        if (getClass() != obj.getClass())
+            return false;
+        WsYTHandler other = (WsYTHandler) obj;
+        return Objects.equals(authHandler, other.authHandler) && currentState == other.currentState
+                && clientConnected == other.clientConnected && bufferCounter == other.bufferCounter;
     }
 }

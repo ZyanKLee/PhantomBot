@@ -1,5 +1,5 @@
 <!--
-    Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+    Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -52,7 +52,8 @@
                             <div id="raffle-list">
                                 <table class="table table-hover table-custom" id="raffle-table" style="width: 100%;">
                                 	<tr>
-                                        <th style="width: 100%;">Username</th>
+                                        <th style="width: 100%;">Entries</th>
+                                        <th style="width: 100%;">Winners</th>
                                     </tr>
                                 </table>
                             </div>
@@ -122,17 +123,36 @@
 
                             <!-- Regular luck -->
                             <div class="form-group">
-                                <label for="raffle-reg">Regular Luck</label>
-                                <input type="number" min="1" max="10" class="form-control" id="raffle-reg" value="1"
+                                <label for="raffle-reg">Regular Luck (Bonus Entries)</label>
+                                <input type="number" min="0" max="10" class="form-control" id="raffle-reg" value="1"
                                     data-toggle="tooltip" title="How many more times a regular is likely to win."/>
                             </div>
 
                             <!-- Subscriber luck -->
                             <div class="form-group">
-                                <label for="raffle-sub">Subscriber Luck</label>
-                                <input type="number" min="1" max="10" class="form-control" id="raffle-sub" value="1"
+                                <label for="raffle-sub">Subscriber Luck (Bonus Entries)</label>
+                                <input type="number" min="0" max="10" class="form-control" id="raffle-sub" value="1"
                                     data-toggle="tooltip" title="How many more times a subscriber is likely to win."/>
                             </div>
+
+                            <div class="box-header with-border">
+                                <h3 class="box-title">Draw Options</h3>
+                            </div>
+
+                            <!-- Draw amount -->
+                            <div class="form-group">
+                                <label for="raffle-draw">Draw amount</label>
+                                <input type="number" min="1" class="form-control" id="raffle-draw" value="1"
+                                    data-toggle="tooltip" title="The amount of winners to be drawn."/>
+                            </div>
+
+                            <!-- Prize -->
+                            <div class="form-group">
+                                <label for="raffle-prize">Prize</label>
+                                <input type="number" min="0" class="form-control" id="raffle-prize" value="0"
+                                    data-toggle="tooltip" title="The amount of loyalty points each winner is awarded."/>
+                            </div>
+
                         </div>
 
                         <!-- Footer with buttons -->

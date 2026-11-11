@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,13 +20,18 @@ var canScroll = true;
 
 // Function that querys all of the data we need.
 $(function () {
+    $('.event-log').closest('form').resizable({
+        handles: "s",
+        alsoResize: ".event-log",
+        minHeight: "150"
+    });
     // Query our panel settings first.
     socket.getDBValues('panel_get_settings', {
         tables: ['panelData', 'panelData', 'modules'],
         keys: ['isDark', 'isReverseSortEvents', './systems/commercialSystem.js']
     }, true, function (e) {
-        helpers.isDark = e.isDark === 'true';
-        helpers.isReverseSortEvents = e.isReverseSortEvents === 'true';
+        helpers.isDark = helpers.isTrue(e.isDark);
+        helpers.isReverseSortEvents = helpers.isTrue(e.isReverseSortEvents);
 
         // Handle the dark mode skins.
         helpers.handleDarkMode(helpers.isDark, true);
@@ -35,8 +40,8 @@ $(function () {
         // Update event toggle.
         $('#toggle-reverse-events').prop('checked', helpers.isReverseSortEvents);
 
-        // Disable isntant commercials if the module is disabled
-        if (e['./systems/commercialSystem.js'] !== 'true') {
+        // Disable instant commercials if the module is disabled
+        if (!helpers.isTrue(e['./systems/commercialSystem.js'])) {
             $('#grp-instant-commercial').addClass('hidden');
         } else {
             $('#instant-commercial-length').select2({
@@ -52,15 +57,27 @@ $(function () {
 
                 // This should never be null unless the user removes the DB table.
                 if (events !== null) {
+                    for (let i = 0; i < events.length; i++) {
+						if (isNaN(events[i].date)) {
+							try {
+								events[i]._date = Date.parse(events[i].date);
+							} catch (e) {
+								helpers.logError(e);
+								events[i]._date = 0;
+							}
+						} else {
+							events[i]._date = events[i].date;
+						}
+					}
 
                     // Sort events if needed.
                     if (helpers.isReverseSortEvents) {
                         events.sort(function (a, b) {
-                            return b.date - a.date;
+                            return b._date - a._date;
                         });
                     } else {
                         events.sort(function (a, b) {
-                            return a.date - b.date;
+                            return a._date - b._date;
                         });
                     }
 
@@ -125,18 +142,25 @@ $(function () {
             // Query panel information.
             socket.getDBValue('dashboard_get_data', 'panelData', 'stream', function (e) {
                 if (e.panelData === null) {
-                    alert('Please allow the bot to generate the data needed to load this page. Try again in 60 seconds...');
-                    return;
+                    socket.wsEvent('panelDataRefresh', './core/panelHandler.js', '', [], function (e) {});
+                    e = {'title': 'Initializing...', 'game': 'Initializing...', 'isLive': false, 'uptime': 'Init', 'chatters': 0, 'viewers': 0, 'followers': 0, 'subs': 0};
+                } else {
+                    // Parse our object.
+                    e = JSON.parse(e.panelData);
                 }
-
-                // Parse our object.
-                e = JSON.parse(e.panelData);
                 // Temp data.
                 const tempData = e;
                 // Set stream title.
                 $('#stream-title').val(e.title);
                 // Set stream game.
-                $('#stream-game').val(e.game);
+                if ($('#stream-game').find('option[value="' + e.game.replaceAll('"', '\\"') + '"]').length) {
+                    $('#stream-game').val(e.game).trigger('change');
+                } else {
+                    // Create a DOM Option and pre-select by default
+                    let newOption = new Option(e.game, e.game, true, true);
+                    // Append it to the select
+                    $('#stream-game').append(newOption).trigger('change');
+                }
                 // Set uptime.
                 if (e.isLive) {
                     $('#dashboard-uptime').html(e.uptime);
@@ -162,90 +186,69 @@ $(function () {
 
                     // Enable the select2 dropdown.
                     $('#custom-command-run').select2({
-                        placeholder: 'Select a Command to Run'
+                        placeholder: 'Select a Command to Run',
+                        allowClear: true
                     }).tooltip('disable');
 
-                    // Don't load chat or the player in debug mode.
-                    // Twitch prints a bunch of errors in the iframe, so it gets confusing.
-                    if (helpers.DEBUG_STATE === helpers.DEBUG_STATES.DEBUG) {
+                    socket.getDBValues('dashboard_get_panel_toggles', {
+                        tables: ['panelData', 'panelData'],
+                        keys: ['hasChat', 'hasPlayer']
+                    }, true, function (e) {
+                        e.hasChat = (helpers.isTrue(e.hasChat) || e.hasChat === null);
+                        e.hasPlayer = (helpers.isTrue(e.hasPlayer) || e.hasPlayer === null);
+
+                        // Handle adding the chat.
+                        if (e.hasChat && helpers.canEmbedTwitch()) {
+                            $('#twitch-chat-iframe').html($('<iframe/>', {
+                                'frameborder': '0',
+                                'scrolling': 'no',
+                                'style': 'width: 100%; height: 450px; margin-bottom: -5px;',
+                                'src': 'https://www.twitch.tv/embed/' + getChannelName() + '/chat' + (helpers.isDark ? '?darkpopout&' : '?') + 'parent=' + location.hostname
+                            }));
+                        } else if (e.hasChat && helpers.currentPanelUserData.userType === 'CONFIG') {
+                            $('#twitch-chat-iframe').html(helpers.CANT_EMBED_TWITCH_TEXT);
+                            $('#twitch-chat-iframe').addClass('box-body');
+                        } else {
+                            $('#twitch-chat-box').addClass('off');
+                        }
+
+                        // Handle adding the player.
+                        if (e.hasPlayer && helpers.canEmbedTwitch()) {
+                            // Add the player.
+                            $('#twitch-player-iframe').html($('<iframe/>', {
+                                'frameborder': '0',
+                                'scrolling': 'no',
+                                'style': 'width: 100%; height: 450px; margin-bottom: -5px;',
+                                'src': 'https://player.twitch.tv/?channel=' + getChannelName() + '&muted=true&autoplay=false' + '&parent=' + location.hostname
+                            }));
+                        } else if (e.hasPlayer && helpers.currentPanelUserData.userType === 'CONFIG') {
+                            $('#twitch-player-iframe').html(helpers.CANT_EMBED_TWITCH_TEXT);
+                            $('#twitch-player-iframe').addClass('box-body');
+                        } else {
+                            $('#twitch-player-box').addClass('off');
+                        }
+
+                        // Handle box sizes.
+                        $('#twitch-chat-box').prop('class', (!e.hasPlayer ? 'col-md-12' : 'col-md-6'));
+                        $('#twitch-player-box').prop('class', (!e.hasChat ? 'col-md-12' : 'col-md-6'));
+
+                        // Handle toggles.
+                        $('#toggle-chat').prop('checked', e.hasChat);
+                        $('#toggle-player').prop('checked', e.hasPlayer);
+
                         // This will be called once the css and everything is loaded.
                         $(document).ready(function () {
                             // Done loading, show main page.
                             $.showPage();
                             // Scroll to bottom of event log.
                             $('.event-log').scrollTop((helpers.isReverseSortEvents ? ($('.event-log').scrollTop() - $('.recent-events').height()) : $('.recent-events').height()));
-                            // Disable chat and the player.
-                            $('#twitch-chat-box').addClass('off');
-                            $('#twitch-player-box').addClass('off');
-                            // Set views if not hidden.
-                            helpers.handlePanelSetInfo($('#dashboard-views').data('number', helpers.parseNumber(tempData.views)), 'dashboard-views', helpers.fixNumber(tempData.views));
                             // Set viewers.
                             helpers.handlePanelSetInfo($('#dashboard-viewers').data('number', helpers.parseNumber(tempData.viewers)), 'dashboard-viewers', helpers.fixNumber(tempData.viewers));
                             // Set followers.
                             helpers.handlePanelSetInfo($('#dashboard-followers').data('number', helpers.parseNumber(tempData.followers)), 'dashboard-followers', helpers.fixNumber(tempData.followers));
+                            helpers.handlePanelSetInfo($('#dashboard-subs').data('number', helpers.parseNumber(tempData.subs)), 'dashboard-subs', helpers.fixNumber(tempData.subs));
                         });
-                    } else {
-                        socket.getDBValues('dashboard_get_panel_toggles', {
-                            tables: ['panelData', 'panelData'],
-                            keys: ['hasChat', 'hasPlayer']
-                        }, true, function (e) {
-                            e.hasChat = (e.hasChat === 'true' || e.hasChat === null);
-                            e.hasPlayer = (e.hasPlayer === 'true' || e.hasPlayer === null);
-
-                            // Handle adding the chat.
-                            if (e.hasChat && location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
-                                $('#twitch-chat-iframe').html($('<iframe/>', {
-                                    'frameborder': '0',
-                                    'scrolling': 'no',
-                                    'style': 'width: 100%; height: 450px; margin-bottom: -5px;',
-                                    'src': 'https://www.twitch.tv/embed/' + getChannelName() + '/chat' + (helpers.isDark ? '?darkpopout&' : '?') + 'parent=' + location.hostname
-                                }));
-                            } else if (e.hasChat) {
-                                $('#twitch-chat-iframe').html('Due to changes by Twitch, the chat panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
-                                $('#twitch-chat-iframe').addClass('box-body');
-                            } else {
-                                $('#twitch-chat-box').addClass('off');
-                            }
-
-                            // Handle adding the player.
-                            if (e.hasPlayer && location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
-                                // Add the player.
-                                $('#twitch-player-iframe').html($('<iframe/>', {
-                                    'frameborder': '0',
-                                    'scrolling': 'no',
-                                    'style': 'width: 100%; height: 450px; margin-bottom: -5px;',
-                                    'src': 'https://player.twitch.tv/?channel=' + getChannelName() + '&muted=true&autoplay=false' + '&parent=' + location.hostname
-                                }));
-                            } else if (e.hasPlayer) {
-                                $('#twitch-player-iframe').html('Due to changes by Twitch, the live feed panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
-                                $('#twitch-player-iframe').addClass('box-body');
-                            } else {
-                                $('#twitch-player-box').addClass('off');
-                            }
-
-                            // Handle box sizes.
-                            $('#twitch-chat-box').prop('class', (!e.hasPlayer ? 'col-md-12' : 'col-md-6'));
-                            $('#twitch-player-box').prop('class', (!e.hasChat ? 'col-md-12' : 'col-md-6'));
-
-                            // Handle toggles.
-                            $('#toggle-chat').prop('checked', e.hasChat);
-                            $('#toggle-player').prop('checked', e.hasPlayer);
-
-                            // This will be called once the css and everything is loaded.
-                            $(document).ready(function () {
-                                // Done loading, show main page.
-                                $.showPage();
-                                // Scroll to bottom of event log.
-                                $('.event-log').scrollTop((helpers.isReverseSortEvents ? ($('.event-log').scrollTop() - $('.recent-events').height()) : $('.recent-events').height()));
-                                // Set views if not hidden.
-                                helpers.handlePanelSetInfo($('#dashboard-views').data('number', helpers.parseNumber(tempData.views)), 'dashboard-views', helpers.fixNumber(tempData.views));
-                                // Set viewers.
-                                helpers.handlePanelSetInfo($('#dashboard-viewers').data('number', helpers.parseNumber(tempData.viewers)), 'dashboard-viewers', helpers.fixNumber(tempData.viewers));
-                                // Set followers.
-                                helpers.handlePanelSetInfo($('#dashboard-followers').data('number', helpers.parseNumber(tempData.followers)), 'dashboard-followers', helpers.fixNumber(tempData.followers));
-                            });
-                        });
-                    }
+                    });
                 });
             });
         });
@@ -255,47 +258,44 @@ $(function () {
 
 // Function that handlers the loading of events.
 $(function () {
-    // handle auto complete.
-    var gameSearch = '';
-    var games = [];
-    $('#stream-game').easyAutocomplete({
-        'url': function (game) {
-            gameSearch = game;
-            return window.location;
-        },
-        'ajaxSettings': {
-            'dataType': 'text',
-            'dataFilter': async() => {
-                var isDone = false;
-                socket.doRemote('games', 'games', {
-                    'search': gameSearch
-                }, function (e) {
-                    if (e.length > 0 && !e[0].errors) {
-                        games = e;
-                    } else {
-                        games = [];
-                    }
-                    isDone = true;
-                });
+    let games = {};
+    let isDoneGames = false;
+    function getGames(params) {
+        isDoneGames = false;
+        socket.doRemote('games', 'games', {
+            'search': params.data.q
+        }, function (e) {
+            if (e.results && e.results.length > 0 && !e.results[0].errors) {
+                games = e;
+            } else {
+                games = false;
+            }
+            isDoneGames = true;
+        });
+    }
 
-                var checkIfGamesDoneAsync = async () => {
-                    return isDone;
-                };
+    async function checkIfGamesDoneAsync() {
+        return isDoneGames;
+    }
 
-                await helpers.promisePoll(() => checkIfGamesDoneAsync(), {pollIntervalMs: 250});
+    $('#stream-game').select2({
+        ajax: {
+            delay: 500,
+            transport: async function(params, success, failure) {
+                getGames(params);
 
-                return games;
+                await helpers.promisePoll(() => checkIfGamesDoneAsync(), {pollIntervalMs: 100});
+
+                if (games === false) {
+                    failure('500');
+                } else {
+                    success(games);
+                }
             }
         },
-        'listLocation': function (data) {
-            return games;
-        },
-        'requestDelay': 300,
-        'list': {
-            'match': {
-                'enabled': true
-            }
-        }
+        minimumInputLength: 1,
+        tags: false,
+        width: '100%'
     });
 
     // Input check for strings.
@@ -304,17 +304,19 @@ $(function () {
     });
 
     // Handle the hidding of the dashboard panels.
-    $('#dashboard-views, #dashboard-followers, #dashboard-viewers').on('click', function (e) {
+    $('#dashboard-subs, #dashboard-followers, #dashboard-viewers').on('click', function (e) {
         helpers.handlePanelToggleInfo($(this), e.target.id);
     });
 
-    $(window).resize(function () {
-        let isSmall = $('.small-box').width() < 230;
+    $(function () {
+        $('#dashboard-title').text(getChannelName() + " | Dashboard");
+    });
 
+    $(window).resize(function () {
         $('.small-box').each(function () {
             const h3 = $(this).find('h3');
 
-            if (h3.attr('id') != 'dashboard-uptime') {
+            if (h3.attr('id') !== 'dashboard-uptime') {
                 helpers.handlePanelSetInfo(h3, h3.attr('id'), h3.data('parsed'));
             }
         });
@@ -351,9 +353,6 @@ $(function () {
             case 'raid':
                 command = 'raid ' + username;
                 break;
-            case 'host':
-                command = 'host ' + username;
-                break;
         }
 
         // Run the command.
@@ -367,11 +366,51 @@ $(function () {
 
     // Handle custom command run.
     $('#custom-command-run').on('select2:select', function (e) {
-        socket.sendCommand('send_command', e.params.data.text.substr(1), function () {
-            // Alert user.
-            toastr.success('Successfully ran command ' + e.params.data.text);
-            // Clear input.
-            $('#custom-command-run').val('').trigger('change');
+        const selectedValue = e.params.data.text;
+        if (!selectedValue) return;
+        const $container = $('#custom-command-run').data('select2').$container;
+        const $selection = $container.find('.select2-selection');
+        const $rendered = $container.find('.select2-selection__rendered');
+        $rendered.html(`
+          <input type="text" id="custom-command-input" 
+                 value="${selectedValue} " 
+                 style="border: none; outline: none; background: transparent; width: 100%; font: inherit; padding: 0;" />
+        `);
+        let $clearBtn = $selection.find('.select2-selection__clear');
+        if ($clearBtn.length === 0) {
+          $rendered.prepend('<span class="select2-selection__clear" title="Clear selection">×</span>');
+          $clearBtn = $selection.find('.select2-selection__clear');
+        } else {
+          $clearBtn.show();
+        }
+        const $input = $('#custom-command-input');
+        $input.focus();
+        const len = $input.val().length;
+        $input[0].setSelectionRange(len, len);
+        $input.on('click mousedown', function (evt) {
+          evt.stopPropagation();
+        });
+        $input.on('keydown', function (evt) {
+          if (evt.key === 'Enter') {
+            evt.preventDefault();
+            evt.stopPropagation();
+            const origval = $(this).val();
+            let val = origval;
+            if (val.startsWith('!')) {
+                val = val.slice(1);
+            }
+            socket.sendCommand('send_command', val.trim(), function () {
+                // Alert user.
+                toastr.success('Successfully ran command ' + origval);
+                // Clear input.
+                $('#custom-command-run').val('').trigger('change');
+            });
+          }
+        });
+        $clearBtn.off('click.customClear').on('click.customClear', function (evt) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          $('#custom-command-run').val('').trigger('change');
         });
     });
 
@@ -408,7 +447,7 @@ $(function () {
 
         // Update the toggle.
         socket.updateDBValue('panel_chat_toggle', 'panelData', 'hasPlayer', checked, function () {
-            if (checked && location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
+            if (checked && helpers.canEmbedTwitch()) {
                 $('#twitch-player-iframe').html($('<iframe/>', {
                     'frameborder': '0',
                     'scrolling': 'no',
@@ -423,7 +462,7 @@ $(function () {
                     $('#twitch-player-box').prop('class', 'col-md-12');
                 }
             } else if (checked) {
-                $('#twitch-player-iframe').html('Due to changes by Twitch, the live feed panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
+                $('#twitch-player-iframe').html(helpers.CANT_EMBED_TWITCH_TEXT);
                 $('#twitch-player-iframe').addClass('box-body');
                 // Handle the box size.
                 if ($('#twitch-chat-iframe').html().length > 0) {
@@ -446,7 +485,7 @@ $(function () {
 
         // Update the toggle.
         socket.updateDBValue('panel_chat_toggle', 'panelData', 'hasChat', checked, function () {
-            if (checked && location.protocol.toLowerCase().startsWith('https') && !(location.port > 0 && location.port !== 443)) {
+            if (checked && helpers.canEmbedTwitch()) {
                 $('#twitch-chat-iframe').html($('<iframe/>', {
                     'frameborder': '0',
                     'scrolling': 'no',
@@ -462,7 +501,7 @@ $(function () {
                     $('#twitch-chat-box').prop('class', 'col-md-12');
                 }
             } else if (checked) {
-                $('#twitch-chat-iframe').html('Due to changes by Twitch, the chat panel can no longer be displayed unless you enable SSL on the PhantomBot Panel and change the baseport to 443. This may not work without root privileges.<br /><br />Alternatively, you can login using the GitHub version of the panel at <a href="https://phantombot.github.io/PhantomBot/">PhantomBot - GitHub.io</a> which gets around this issue.<br /><br />For help setting up SSL, please see <a href="https://phantombot.github.io/PhantomBot/guides/#guide=content/integrations/twitchembeds">this guide</a>.');
+                $('#twitch-chat-iframe').html(helpers.CANT_EMBED_TWITCH_TEXT);
                 $('#twitch-chat-iframe').addClass('box-body');
                 // Handle the box size.
                 if ($('#twitch-player-iframe').html().length > 0) {
@@ -491,14 +530,18 @@ $(function () {
         helpers.log('Refreshing dashboard data.', helpers.LOG_TYPE.INFO);
         // Query stream data.
         socket.getDBValue('dashboard_get_data_refresh', 'panelData', 'stream', function (e) {
-            // Parse our object.
-            e = JSON.parse(e.panelData);
-            // Set views if not hidden.
-            helpers.handlePanelSetInfo($('#dashboard-views').data('number', helpers.parseNumber(e.views)), 'dashboard-views', helpers.fixNumber(e.views));
+            if (e.panelData === null) {
+                socket.wsEvent('panelDataRefresh', './core/panelHandler.js', '', [], function (e) {});
+                e = {'title': 'Initializing...', 'game': 'Initializing...', 'isLive': false, 'uptime': 'Init', 'chatters': 0, 'viewers': 0, 'followers': 0, 'subs': 0};
+            } else {
+                // Parse our object.
+                e = JSON.parse(e.panelData);
+            }
             // Set viewers.
             helpers.handlePanelSetInfo($('#dashboard-viewers').data('number', helpers.parseNumber(e.viewers)), 'dashboard-viewers', helpers.fixNumber(e.viewers));
             // Set followers.
             helpers.handlePanelSetInfo($('#dashboard-followers').data('number', helpers.parseNumber(e.followers)), 'dashboard-followers', helpers.fixNumber(e.followers));
+            helpers.handlePanelSetInfo($('#dashboard-subs').data('number', helpers.parseNumber(e.subs)), 'dashboard-subs', helpers.fixNumber(e.subs));
             // Set uptime.
             if (e.isLive) {
                 $('#dashboard-uptime').html(e.uptime);
@@ -516,15 +559,27 @@ $(function () {
 
                 // This should never be null unless the user removes the DB table.
                 if (events !== null) {
+                    for (let i = 0; i < events.length; i++) {
+						if (isNaN(events[i].date)) {
+							try {
+								events[i]._date = Date.parse(events[i].date);
+							} catch (e) {
+								helpers.logError(e);
+								events[i]._date = 0;
+							}
+						} else {
+							events[i]._date = events[i].date;
+						}
+					}
 
                     // Sort events if needed.
                     if (helpers.isReverseSortEvents) {
                         events.sort(function (a, b) {
-                            return b.date - a.date;
+                            return b._date - a._date;
                         });
                     } else {
                         events.sort(function (a, b) {
-                            return a.date - b.date;
+                            return a._date - b._date;
                         });
                     }
 

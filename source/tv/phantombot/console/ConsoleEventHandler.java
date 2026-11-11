@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,38 +16,63 @@
  */
 package tv.phantombot.console;
 
-import com.gmt2001.HttpRequest;
-import com.gmt2001.HttpResponse;
-import com.gmt2001.TwitchAPIv5;
-import com.gmt2001.datastore.DataStore;
-import com.scaniatv.BotImporter;
-import com.scaniatv.GenerateLogs;
-import java.io.FileOutputStream;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.Enumeration;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.TimeZone;
-import java.util.TreeSet;
-import net.engio.mbassy.listener.Handler;
+import java.util.Map;
+import java.util.Optional;
+
+import org.jooq.CreateIndexIncludeStep;
+import org.jooq.CreateIndexStep;
+import org.jooq.CreateTableElementListStep;
+import org.jooq.DDLQuery;
+import org.jooq.DataType;
+import org.jooq.Index;
+import org.jooq.Table;
+import org.jooq.UniqueKey;
+import org.jooq.impl.SQLDataType;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import com.gmt2001.HttpRequest;
+import com.gmt2001.HttpResponse;
+import com.gmt2001.datastore.DataStore;
+import com.gmt2001.datastore2.Datastore2;
+import com.gmt2001.datastore2.H2Store2;
+import com.gmt2001.datastore2.MariaDBStore2;
+import com.gmt2001.datastore2.MySQLStore2;
+import com.gmt2001.datastore2.SQLiteStore2;
+import com.gmt2001.twitch.tmi.TwitchMessageInterface;
+import com.gmt2001.util.Reflect;
+import com.mcawful.social.SocialItem;
+import com.mcawful.social.SocialPlatform;
+import com.mcawful.social.SocialPlatformRegistry;
+import com.mcawful.social.SocialPostResult;
+
+import net.engio.mbassy.listener.Handler;
 import tv.phantombot.CaselessProperties;
+import tv.phantombot.CaselessProperties.Transaction;
 import tv.phantombot.PhantomBot;
 import tv.phantombot.discord.DiscordAPI;
 import tv.phantombot.event.EventBus;
 import tv.phantombot.event.Listener;
 import tv.phantombot.event.console.ConsoleInputEvent;
 import tv.phantombot.event.irc.channel.IrcChannelJoinEvent;
-import tv.phantombot.event.pubsub.channelpoints.PubSubChannelPointsEvent;
+import tv.phantombot.event.social.SocialActivityEvent;
+import tv.phantombot.event.social.SocialRepostersEvent;
 import tv.phantombot.event.twitch.bits.TwitchBitsEvent;
 import tv.phantombot.event.twitch.clip.TwitchClipEvent;
 import tv.phantombot.event.twitch.follower.TwitchFollowEvent;
-import tv.phantombot.event.twitch.host.TwitchHostedEvent;
 import tv.phantombot.event.twitch.offline.TwitchOfflineEvent;
 import tv.phantombot.event.twitch.online.TwitchOnlineEvent;
 import tv.phantombot.event.twitch.raid.TwitchRaidEvent;
@@ -57,12 +82,13 @@ import tv.phantombot.event.twitch.subscriber.TwitchPrimeSubscriberEvent;
 import tv.phantombot.event.twitch.subscriber.TwitchReSubscriberEvent;
 import tv.phantombot.event.twitch.subscriber.TwitchSubscriberEvent;
 import tv.phantombot.event.twitch.subscriber.TwitchSubscriptionGiftEvent;
-import tv.phantombot.event.twitter.TwitterRetweetEvent;
-import tv.phantombot.script.Script;
+import tv.phantombot.panel.PanelUser.PanelUserHandler;
+import tv.phantombot.script.RhinoRuntime;
 
-public class ConsoleEventHandler implements Listener {
+public final class ConsoleEventHandler implements Listener {
 
     private static final ConsoleEventHandler instance = new ConsoleEventHandler();
+    private Transaction transaction = null;
 
     /**
      * Method that returns this instance.
@@ -81,36 +107,66 @@ public class ConsoleEventHandler implements Listener {
     }
 
     /**
+     * Starts a new transaction if none is setup
+     */
+    private void startTransaction() {
+        if (transaction == null || transaction.isCommitted()) {
+            transaction = CaselessProperties.instance().startTransaction(Transaction.PRIORITY_MAX);
+        }
+    }
+
+    /**
+     * Finishes previously started transaction.
+     * Saving the settings, informing the user
+     * and shutting down the bot
+     */
+    private void finishTransaction() {
+        transaction.commit();
+        com.gmt2001.Console.out.println("");
+        com.gmt2001.Console.out.println("Changes have been saved, now exiting PhantomBot.");
+        com.gmt2001.Console.out.println("");
+        PhantomBot.exitOK();
+    }
+
+    /**
      * Method that is triggered when the console event fires.
      *
      * @param event
      */
+    @SuppressWarnings({ "removal" })
     @Handler
     public void onConsoleInput(ConsoleInputEvent event) throws JSONException {
         // The message said in the console.
         String message = event.getMessage();
-        // If settings were changed.
-        boolean changed = false;
         // Arguments of the message string.
         String arguments = "";
         // Split arguments of the message string.
         String[] argument = null;
-        // Set the datastore.
-        DataStore dataStore = PhantomBot.instance().getDataStore();
 
         // If the message is null, or empty ignore everything below.
         if (message == null || message.isEmpty()) {
             return;
         }
 
-        message = message.replaceAll("!", "").trim();
+        if (message.startsWith("!")) {
+            message = message.substring(1);
+        }
 
         // Check for arguments in the message string.
         if (message.contains(" ")) {
             String messageString = message;
-            message = messageString.substring(0, messageString.indexOf(" "));
-            arguments = messageString.substring(messageString.indexOf(" ") + 1);
+            message = messageString.substring(0, messageString.indexOf(' '));
+            arguments = messageString.substring(messageString.indexOf(' ') + 1);
             argument = arguments.split(" ");
+        }
+
+        /**
+         * @consolecommand forceoauthrefresh - Force a refresh of both Twitch OAuth
+         *                 tokens.
+         */
+        if (message.equalsIgnoreCase("forceoauthrefresh")) {
+            PhantomBot.instance().getAuthFlow().refresh();
+            return;
         }
 
         /**
@@ -126,36 +182,40 @@ public class ConsoleEventHandler implements Listener {
             if (argument != null && argument.length > 1 && !argument[1].isBlank()) {
                 raidNum = argument[1];
             }
-            com.gmt2001.Console.out.println("Testing Raid Event (Username = " + raidName + ", Viewers = " + raidNum + ")");
+            com.gmt2001.Console.out
+                    .println("Testing Raid Event (Username = " + raidName + ", Viewers = " + raidNum + ")");
             EventBus.instance().postAsync(new TwitchRaidEvent(raidName, raidNum));
             return;
         }
 
         /**
-         * @consolecommand checkytquota - This command checks the quota points used by YouTube.
+         * @consolecommand checkytquota - This command checks the quota points used by
+         *                 YouTube.
          */
         if (message.equalsIgnoreCase("checkytquota")) {
-            String ytQuotaDate = dataStore.GetString("youtubePlayer", "", "quotaDate");
-            String ytQuotaPoints = dataStore.GetString("youtubePlayer", "", "quotaPoints");
+            String ytQuotaDate = PhantomBot.instance().getDataStore().GetString("youtubePlayer", "", "quotaDate");
+            String ytQuotaPoints = PhantomBot.instance().getDataStore().GetString("youtubePlayer", "", "quotaPoints");
 
             if (ytQuotaDate == null || ytQuotaPoints == null) {
                 com.gmt2001.Console.out.println("No YouTube Quota Data Found.");
             } else {
-                com.gmt2001.Console.out.println("YouTube Quota Date (US/Pacific): " + ytQuotaDate + " Points Used: " + ytQuotaPoints);
+                com.gmt2001.Console.out
+                        .println("YouTube Quota Date (US/Pacific): " + ytQuotaDate + " Points Used: " + ytQuotaPoints);
             }
             return;
         }
 
         /**
-         * @consolecommand exportpoints - This command exports points and time to a CSV file.
+         * @consolecommand exportpoints - This command exports points and time to a CSV
+         *                 file.
          */
         if (message.equalsIgnoreCase("exportpoints")) {
             com.gmt2001.Console.out.println("[CONSOLE] Executing exportpoints.");
 
             // Top headers of the CSV file.
-            String[] headers = new String[]{"Username", "Seconds", "Points"};
+            String[] headers = new String[] { "Username", "Seconds", "Points" };
             // All points keys.
-            String[] keys = dataStore.GetKeyList("points", "");
+            String[] keys = PhantomBot.instance().getDataStore().GetKeyList("points", "");
             // Array to store our values.
             List<String[]> values = new ArrayList<>();
 
@@ -163,8 +223,10 @@ public class ConsoleEventHandler implements Listener {
             for (String key : keys) {
                 String[] str = new String[3];
                 str[0] = key;
-                str[1] = (dataStore.exists("time", key) ? dataStore.get("time", key) : "0");
-                str[2] = dataStore.get("points", key);
+                str[1] = (PhantomBot.instance().getDataStore().exists("time", key)
+                        ? PhantomBot.instance().getDataStore().get("time", key)
+                        : "0");
+                str[2] = PhantomBot.instance().getDataStore().get("points", key);
                 values.add(str);
             }
 
@@ -175,23 +237,91 @@ public class ConsoleEventHandler implements Listener {
         }
 
         /**
-         * @consolecommand createcmdlist - Creates a list of all commands with their permissions.
+         * @consolecommand importpoints - This command imports time and points from a
+         *                 csv file in format (Username,Seconds,Points)
+         */
+        if (message.equalsIgnoreCase("importpoints")) {
+            if (argument == null || argument.length < 1) {
+                com.gmt2001.Console.out.println(
+                        "Command usage: import  [filename.csv in ./addons/import with header (Username,Seconds,Points)]");
+                return;
+            }
+
+            File file = new File("./addons/import/" + argument[0]);
+            if (!file.exists()) {
+                com.gmt2001.Console.out
+                        .println("File " + argument[0] + " does not exist in the folder ./addons/import");
+                return;
+            }
+
+            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+                StringBuilder builder = new StringBuilder();
+                String line = reader.readLine(); // ignore first line because its csv format.
+
+                if (!line.equalsIgnoreCase("Username,Seconds,Points")) {
+                    com.gmt2001.Console.out.println("File format is incorrect: (Username,Seconds,Points)");
+                    return;
+                }
+
+                while (line != null) {
+                    line = reader.readLine();
+                    builder.append(line + System.lineSeparator());
+                }
+
+                String[] finalStr = builder.toString().split(System.lineSeparator());
+
+                for (int i = 0; i < finalStr.length; i++) {
+                    String[] parts = finalStr[i].split(",");
+                    String username = parts[0].toLowerCase();
+                    int seconds = 0;
+                    int points = 0;
+
+                    try {
+                        seconds = Integer.parseInt(parts[1]);
+                    } catch (NumberFormatException ex) {
+                        com.gmt2001.Console.out.println("Failed to parse seconds number: " + parts[1]);
+                        continue;
+                    }
+
+                    try {
+                        points = Integer.parseInt(parts[2]);
+                    } catch (NumberFormatException ex) {
+                        com.gmt2001.Console.out.println("Failed to parse points number: " + parts[2]);
+                        continue;
+                    }
+
+                    PhantomBot.instance().getDataStore().incr("points", username, points);
+                    PhantomBot.instance().getDataStore().incr("time", username, seconds);
+                    com.gmt2001.Console.out.println(
+                            "[IMPORTED] " + username + " -- Points (" + points + ") -- Time (" + seconds + ")");
+                }
+            } catch (IOException ex) {
+                com.gmt2001.Console.err.println(ex);
+            }
+            return;
+        }
+
+        /**
+         * @consolecommand createcmdlist - Creates a list of all commands with their
+         *                 permissions as a CSV.
          */
         if (message.equalsIgnoreCase("createcmdlist")) {
             com.gmt2001.Console.out.println("[CONSOLE] Executing createcmdlist.");
 
             // Headers of the CSV file.
-            String[] headers = new String[]{"Command", "Permission", "Module"};
+            String[] headers = new String[] { "Command", "Permission", "Module" };
             // All commands.
-            String[] keys = dataStore.GetKeyList("permcom", "");
+            String[] keys = PhantomBot.instance().getDataStore().GetKeyList("permcom", "");
             // Array to store commands.
             List<String[]> values = new ArrayList<>();
 
             for (String key : keys) {
                 String[] str = new String[3];
                 str[0] = ("!" + key);
-                str[1] = dataStore.get("groups", dataStore.get("permcom", key));
-                str[2] = Script.callMethod("getCommandScript", key.contains(" ") ? key.substring(0, key.indexOf(" ")) : key);
+                str[1] = PhantomBot.instance().getDataStore().get("groups",
+                        PhantomBot.instance().getDataStore().get("permcom", key));
+                str[2] = RhinoRuntime.callGlobalExposedScriptMethod("getCommandScript",
+                        key.contains(" ") ? key.substring(0, key.indexOf(' ')) : key);
                 // If the module is disabled, return.
                 if (str[2].contains("Undefined")) {
                     continue;
@@ -206,19 +336,6 @@ public class ConsoleEventHandler implements Listener {
         }
 
         /**
-         * @consolecommand retweettest [Twitter ID] - Sends a fake test Retweet event.
-         */
-        if (message.equalsIgnoreCase("retweettest")) {
-            if (argument == null || argument.length == 0 || argument[0].isBlank()) {
-                com.gmt2001.Console.out.println(">> retweettest requires a Twitter ID (or Twitter IDs)");
-                return;
-            }
-            com.gmt2001.Console.out.println(">> Sending retweet test event");
-            EventBus.instance().postAsync(new TwitterRetweetEvent(argument));
-            return;
-        }
-
-        /**
          * @consolecommand botinfo - Prints the bot information in the console.
          */
         if (message.equalsIgnoreCase("botinfo")) {
@@ -227,66 +344,53 @@ public class ConsoleEventHandler implements Listener {
         }
 
         /**
-         * @consolecommand revloconvert [CSV file] - Command that imports points from RevloBot.
-         */
-        if (message.equalsIgnoreCase("revloconvert")) {
-            com.gmt2001.Console.out.println("[CONSOLE] Executing revloconvert");
-            if (argument == null) {
-                com.gmt2001.Console.out.println("You must specify the file name you want to convert.");
-                return;
-            }
-
-            BotImporter.ImportRevlo(arguments);
-            return;
-        }
-
-        /**
-         * @consolecommand ankhconvert [CSV file] - Command that imports points from AnkhBot.
-         */
-        if (message.equalsIgnoreCase("ankhconvert")) {
-            com.gmt2001.Console.out.println("[CONSOLE] Executing ankhconvert");
-            if (argument == null) {
-                com.gmt2001.Console.out.println("You must specify the file name you want to convert.");
-                return;
-            }
-
-            BotImporter.ImportAnkh(arguments);
-            return;
-        }
-
-        /**
          * @consolecommand backupdb - Creates a backup of the current database.
          */
         if (message.equalsIgnoreCase("backupdb")) {
+            if (!Datastore2.instance().supportsBackup()) {
+                com.gmt2001.Console.err
+                        .println("[CONSOLE] Current database type does not support backup/restore from PhantomBot");
+                return;
+            }
+
             com.gmt2001.Console.out.println("[CONSOLE] Executing backupdb");
-            SimpleDateFormat datefmt = new SimpleDateFormat("ddMMyyyy.hhmmss");
-            datefmt.setTimeZone(TimeZone.getTimeZone(PhantomBot.getTimeZone()));
-            String timestamp = datefmt.format(new Date());
+            String timestamp = LocalDateTime.now(PhantomBot.getTimeZoneId())
+                    .format(DateTimeFormatter.ofPattern("ddMMyyyy.hhmmss"));
 
-            dataStore.backupDB("phantombot.manual.backup." + timestamp + ".db");
+            Datastore2.instance().backup("phantombot.manual.backup." + timestamp + ".db");
+            com.gmt2001.Console.out.println(
+                    "[CONSOLE] Created database backup at ./dbbackup/phantombot.manual.backup." + timestamp + ".db");
             return;
         }
 
         /**
-         * @consolecommand fixfollowedtable - Grabs the last 10,000 followers from the Twitch API.
+         * @consolecommand restoredb (filename) - Restores a backup of the database.
          */
-        if (message.equalsIgnoreCase("fixfollowedtable")) {
-            com.gmt2001.Console.out.println("[CONSOLE] Executing fixfollowedtable");
-            TwitchAPIv5.instance().FixFollowedTable(PhantomBot.instance().getChannelName(), dataStore, false);
+        if (message.equalsIgnoreCase("restoredb")) {
+            if (!Datastore2.instance().supportsBackup()) {
+                com.gmt2001.Console.err
+                        .println("[CONSOLE] Current database type does not support backup/restore from PhantomBot");
+                return;
+            }
+
+            if (argument == null || argument.length == 0 || argument[0].isBlank()) {
+                com.gmt2001.Console.err
+                        .println("[CONSOLE] Please provide a filename in the dbbackup folder to restore from");
+                return;
+            }
+
+            com.gmt2001.Console.out.println("[CONSOLE] Executing restoredb");
+            try {
+                Datastore2.instance().restoreBackup(argument[0]);
+            } catch (FileNotFoundException e) {
+                com.gmt2001.Console.err.println("[CONSOLE] Could not find file " + e.getMessage());
+            }
             return;
         }
 
         /**
-         * @consolecommand fixfollowedtable-force - Grabs all followers from the Twitch API.
-         */
-        if (message.equalsIgnoreCase("fixfollowedtable-force")) {
-            com.gmt2001.Console.out.println("[CONSOLE] Executing fixfollowedtable-force");
-            TwitchAPIv5.instance().FixFollowedTable(PhantomBot.instance().getChannelName(), dataStore, true);
-            return;
-        }
-
-        /**
-         * @consolecommand jointest (userName) - Sends 30 fake join events or one specific user for testing.
+         * @consolecommand jointest (userName) - Sends 30 fake join events or one
+         *                 specific user for testing.
          */
         if (message.equalsIgnoreCase("jointest")) {
             com.gmt2001.Console.out.println("[CONSOLE] Executing jointest");
@@ -295,17 +399,10 @@ public class ConsoleEventHandler implements Listener {
                 EventBus.instance().postAsync(new IrcChannelJoinEvent(PhantomBot.instance().getSession(), argument[0]));
             } else {
                 for (int i = 0; i < 30; i++) {
-                    EventBus.instance().postAsync(new IrcChannelJoinEvent(PhantomBot.instance().getSession(), PhantomBot.generateRandomString(8)));
+                    EventBus.instance().postAsync(new IrcChannelJoinEvent(PhantomBot.instance().getSession(),
+                            PhantomBot.generateRandomString(8)));
                 }
             }
-        }
-
-        if (message.equalsIgnoreCase("channelpointstest")) {
-            EventBus.instance().postAsync(new PubSubChannelPointsEvent(
-                    "id1", "rewardid2", "12345",
-                    "thebestuser", "TheBestUser", "Uber Reward",
-                    50, "Who you gonna call?", "Ghostbusters!", "UNFULLFILLED"
-            ));
             return;
         }
 
@@ -320,8 +417,8 @@ public class ConsoleEventHandler implements Listener {
             }
 
             com.gmt2001.Console.out.println("[CONSOLE] Executing followertest (User: " + user + ")");
-
-            EventBus.instance().postAsync(new TwitchFollowEvent(user, (new Date()).toString()));
+            EventBus.instance().postAsync(
+                    new TwitchFollowEvent(user, ZonedDateTime.now().format(DateTimeFormatter.RFC_1123_DATE_TIME)));
             return;
         }
 
@@ -336,16 +433,19 @@ public class ConsoleEventHandler implements Listener {
                 followCount = Integer.parseInt(argument[0]);
             }
 
-            com.gmt2001.Console.out.println("[CONSOLE] Executing followerstest (Count: " + followCount + ", User: " + randomUser + ")");
+            com.gmt2001.Console.out.println(
+                    "[CONSOLE] Executing followerstest (Count: " + followCount + ", User: " + randomUser + ")");
 
             for (int i = 0; i < followCount; i++) {
-                EventBus.instance().postAsync(new TwitchFollowEvent(randomUser + "_" + i, (new Date()).toString()));
+                EventBus.instance().postAsync(new TwitchFollowEvent(randomUser + "_" + i,
+                        ZonedDateTime.now().format(DateTimeFormatter.RFC_1123_DATE_TIME)));
             }
             return;
         }
 
         /**
-         * @consolecommand subscribertest (userName) (tier) (months) (message) - Sends a fake subscriber events.
+         * @consolecommand subscribertest (userName) (tier) (months) (message) - Sends a
+         *                 fake subscriber events.
          */
         if (message.equalsIgnoreCase("subscribertest")) {
             String randomUser = PhantomBot.generateRandomString(10);
@@ -368,14 +468,16 @@ public class ConsoleEventHandler implements Listener {
                 smessage = arguments.substring(argument[0].length() + argument[1].length() + argument[2].length() + 3);
             }
 
-            com.gmt2001.Console.out.println("[CONSOLE] Executing subscribertest (User: " + randomUser + ", tier: " + tier + ", months: " + months + ", message: " + smessage + ")");
+            com.gmt2001.Console.out.println("[CONSOLE] Executing subscribertest (User: " + randomUser + ", tier: "
+                    + tier + ", months: " + months + ", message: " + smessage + ")");
 
             EventBus.instance().postAsync(new TwitchSubscriberEvent(randomUser, tier, months, smessage));
             return;
         }
 
         /**
-         * @consolecommand primesubscribertest (userName) (months) - Sends a fake Prime subscriber events.
+         * @consolecommand primesubscribertest (userName) (months) - Sends a fake Prime
+         *                 subscriber events.
          */
         if (message.equalsIgnoreCase("primesubscribertest")) {
             String randomUser = PhantomBot.generateRandomString(10);
@@ -388,14 +490,17 @@ public class ConsoleEventHandler implements Listener {
                 months = argument[1];
             }
 
-            com.gmt2001.Console.out.println("[CONSOLE] Executing primesubscribertest (User: " + randomUser + ", months: " + months + ")");
+            com.gmt2001.Console.out.println(
+                    "[CONSOLE] Executing primesubscribertest (User: " + randomUser + ", months: " + months + ")");
 
             EventBus.instance().postAsync(new TwitchPrimeSubscriberEvent(randomUser, months));
+            EventBus.instance().postAsync(new TwitchSubscriberEvent(randomUser, "Prime", months, ""));
             return;
         }
 
         /**
-         * @consolecommand resubscribertest (userName) (tier) (months) (message) - Sends a fake re-subscriber events.
+         * @consolecommand resubscribertest (userName) (tier) (months) (message) - Sends
+         *                 a fake re-subscriber events.
          */
         if (message.equalsIgnoreCase("resubscribertest")) {
             String randomUser = PhantomBot.generateRandomString(10);
@@ -418,19 +523,22 @@ public class ConsoleEventHandler implements Listener {
                 smessage = arguments.substring(argument[0].length() + argument[1].length() + argument[2].length() + 3);
             }
 
-            com.gmt2001.Console.out.println("[CONSOLE] Executing resubscribertest (User: " + randomUser + ", tier: " + tier + ", months: " + months + ", message: " + smessage + ")");
+            com.gmt2001.Console.out.println("[CONSOLE] Executing resubscribertest (User: " + randomUser + ", tier: "
+                    + tier + ", months: " + months + ", message: " + smessage + ")");
 
             EventBus.instance().postAsync(new TwitchReSubscriberEvent(randomUser, months, tier, smessage));
             return;
         }
 
         /**
-         * @consolecommand giftsubtest (userName) (tier) (months) - Sends a fake gift subscriber events.
+         * @consolecommand giftsubtest (userName) (tier) (months) - Sends a fake gift
+         *                 subscriber events.
          */
         if (message.equalsIgnoreCase("giftsubtest")) {
             String randomUser = PhantomBot.generateRandomString(10);
             String tier = "1000";
             String months = ((int) (Math.random() * 100.0)) + "";
+            String giftMonths = ((int) (Math.random() * 100.0)) + "";
             if (argument != null && argument.length > 0 && !argument[0].isBlank()) {
                 randomUser = argument[0];
             }
@@ -443,14 +551,21 @@ public class ConsoleEventHandler implements Listener {
                 months = argument[2];
             }
 
-            com.gmt2001.Console.out.println("[CONSOLE] Executing giftsubtest (User: " + randomUser + ", tier: " + tier + ", months: " + months + ")");
+            if (argument != null && argument.length > 3 && !argument[3].isBlank()) {
+                giftMonths = argument[3];
+            }
 
-            EventBus.instance().postAsync(new TwitchSubscriptionGiftEvent(PhantomBot.instance().getChannelName(), randomUser, months, tier));
+            com.gmt2001.Console.out.println("[CONSOLE] Executing giftsubtest (User: " + randomUser + ", tier: " + tier
+                    + ", months: " + months + ", giftMonths: " + giftMonths + ")");
+
+            EventBus.instance().postAsync(new TwitchSubscriptionGiftEvent(PhantomBot.instance().getChannelName(),
+                    randomUser, months, tier, giftMonths));
             return;
         }
 
         /**
-         * @consolecommand massanongiftsubtest (amount) (tier) - Test a mass anonymous gift subscription.
+         * @consolecommand massanonsubgifttest (amount) (tier) - Test a mass anonymous
+         *                 gift subscription.
          */
         if (message.equalsIgnoreCase("massanonsubgifttest")) {
             String amount = "10";
@@ -462,18 +577,56 @@ public class ConsoleEventHandler implements Listener {
             if (argument != null && argument.length > 1 && !argument[1].isBlank()) {
                 tier = argument[1].equalsIgnoreCase("prime") ? argument[1] : argument[1] + "000";
             }
-            com.gmt2001.Console.out.println("Testing Mass Anonymous Gift Sub (Amount: " + amount + ", tier: " + tier + ")");
+            com.gmt2001.Console.out
+                    .println("Testing Mass Anonymous Gift Sub (Amount: " + amount + ", tier: " + tier + ")");
             EventBus.instance().postAsync(new TwitchMassAnonymousSubscriptionGiftedEvent(amount, tier));
             return;
         }
 
         /**
-         * @consolecommand anonsubgifttest (userName) (tier) (months) - Test an anonymous gift subscription
+         * @consolecommand masssubgifttest (amount) (tier) - Test a mass sub gift
+         *                 subscription.
+         */
+        if (message.equalsIgnoreCase("masssubgifttest")) {
+            int amount = 10;
+            String tier = "1000";
+            String newLine = System.getProperty("line.separator");
+            if (argument != null && argument.length > 0 && !argument[0].isBlank()) {
+                amount = Integer.parseInt(argument[0]);
+            }
+
+            if (argument != null && argument.length > 1 && !argument[1].isBlank()) {
+                tier = argument[1].equalsIgnoreCase("prime") ? argument[1] : argument[1] + "000";
+            }
+            com.gmt2001.Console.out
+                    .println("Testing Mass Anonymous Gift Sub (Amount: " + amount + ", tier: " + tier + ")");
+            TwitchMessageInterface tmi = PhantomBot.instance().getTMI();
+
+            String messages = "@display-name=testgifter;msg-param-sub-plan=" + tier
+                    + ";login=testgifter;msg-id=submysterygift;tmi-sent-ts=" + (System.currentTimeMillis() / 1000L)
+                    + ";msg-param-mass-gift-count=" + amount + " :phantombot!phantombot@test USERNOTICE #phantombot :";
+            for (int i = 0; i < amount; i++) {
+                String recipient = PhantomBot.generateRandomString(10).toLowerCase();
+                messages += newLine;
+                messages += "@display-name=testgifter;msg-param-sub-plan=" + tier
+                        + ";login=testgifter;msg-id=subgift;tmi-sent-ts=" + (System.currentTimeMillis() / 1000L)
+                        + ";msg-param-recipient-user-name=" + recipient
+                        + " :phantombot!phantombot@test USERNOTICE #phantombot :";
+            }
+
+            tmi.onMessages(messages);
+            return;
+        }
+
+        /**
+         * @consolecommand anonsubgifttest (userName) (tier) (months) - Test an
+         *                 anonymous gift subscription
          */
         if (message.equalsIgnoreCase("anonsubgifttest")) {
             String userName = PhantomBot.generateRandomString(8);
             String tier = "1000";
             String months = ((int) (Math.random() * 100.0)) + "";
+            String giftMonths = ((int) (Math.random() * 100.0)) + "";
             if (argument != null && argument.length > 0 && !argument[0].isBlank()) {
                 userName = argument[0];
             }
@@ -485,8 +638,13 @@ public class ConsoleEventHandler implements Listener {
             if (argument != null && argument.length > 2 && !argument[2].isBlank()) {
                 months = argument[2];
             }
-            com.gmt2001.Console.out.println("Testing Anonymous Gift Sub (Username = " + userName + ", months: " + months + ", tier: " + tier + ")");
-            EventBus.instance().postAsync(new TwitchAnonymousSubscriptionGiftEvent(userName, months, tier));
+
+            if (argument != null && argument.length > 3 && !argument[3].isBlank()) {
+                giftMonths = argument[3];
+            }
+            com.gmt2001.Console.out.println("Testing Anonymous Gift Sub (Username = " + userName + ", months: " + months
+                    + ", tier: " + tier + ", giftMonths: " + giftMonths + ")");
+            EventBus.instance().postAsync(new TwitchAnonymousSubscriptionGiftEvent(userName, months, tier, giftMonths));
             return;
         }
 
@@ -521,29 +679,12 @@ public class ConsoleEventHandler implements Listener {
 
             com.gmt2001.Console.out.println("[CONSOLE] Executing cliptest " + randomUser);
 
-            EventBus.instance().postAsync(new TwitchClipEvent("https://clips.twitch.tv/ThisIsNotARealClipAtAll", randomUser, "Some title",
-                    new org.json.JSONObject("{\"medium\": \"https://clips-media-assets.twitch.tv/vod-107049351-offset-26-preview-480x272.jpg\", "
-                            + "\"small\": \"https://clips-media-assets.twitch.tv/vod-107049351-offset-26-preview-260x147.jpg\", "
-                            + "\"tiny\": \"https://clips-media-assets.twitch.tv/vod-107049351-offset-26-preview-86x45.jpg\"}")));
-            return;
-        }
-
-        /**
-         * @consolecommand hosttest (userName) (numViewers) - Sends a fake host event.
-         */
-        if (message.equalsIgnoreCase("hosttest")) {
-            String randomUser = PhantomBot.generateRandomString(10);
-            int users = 5;
-            if (argument != null && argument.length > 0 && !argument[0].isBlank()) {
-                randomUser = argument[0];
-            }
-            if (argument != null && argument.length > 1 && !argument[1].isBlank()) {
-                users = Integer.parseInt(argument[1]);
-            }
-
-            com.gmt2001.Console.out.println("[CONSOLE] Executing hosttest (User: " + randomUser + ", viewers: " + users + ")");
-
-            EventBus.instance().postAsync(new TwitchHostedEvent(randomUser, users));
+            EventBus.instance().postAsync(new TwitchClipEvent("https://clips.twitch.tv/ThisIsNotARealClipAtAll",
+                    randomUser, "Some title",
+                    new org.json.JSONObject(
+                            "{\"medium\": \"https://clips-media-assets.twitch.tv/vod-107049351-offset-26-preview-480x272.jpg\", "
+                                    + "\"small\": \"https://clips-media-assets.twitch.tv/vod-107049351-offset-26-preview-260x147.jpg\", "
+                                    + "\"tiny\": \"https://clips-media-assets.twitch.tv/vod-107049351-offset-26-preview-86x45.jpg\"}")));
             return;
         }
 
@@ -566,7 +707,8 @@ public class ConsoleEventHandler implements Listener {
                 smessage = arguments.substring(argument[0].length() + argument[1].length() + 2);
             }
 
-            com.gmt2001.Console.out.println("[CONSOLE] Executing bitstest (User: " + randomUser + ", amount: " + amount + ", message: " + smessage + ")");
+            com.gmt2001.Console.out.println("[CONSOLE] Executing bitstest (User: " + randomUser + ", amount: " + amount
+                    + ", message: " + smessage + ")");
 
             EventBus.instance().postAsync(new TwitchBitsEvent(randomUser, amount, smessage));
             return;
@@ -579,6 +721,16 @@ public class ConsoleEventHandler implements Listener {
             com.gmt2001.Console.out.println("[CONSOLE] Executing discordreconnect");
 
             DiscordAPI.instance().reconnect();
+            return;
+        }
+
+        /**
+         * @consolecommand reconnect - Reconnects to TMI and EventSub.
+         */
+        if (message.equalsIgnoreCase("reconnect")) {
+            com.gmt2001.Console.out.println("[CONSOLE] Executing TMI and EventSub reconnect");
+
+            PhantomBot.instance().reconnect();
             return;
         }
 
@@ -603,42 +755,12 @@ public class ConsoleEventHandler implements Listener {
         }
 
         /**
-         * @consolecommand dumplogs - Writes the latest logs to a file.
-         */
-        if (message.equalsIgnoreCase("dumplogs")) {
-            com.gmt2001.Console.out.println("[CONSOLE] Executing dumplogs");
-
-            GenerateLogs.writeLogs();
-            return;
-        }
-
-        /**
-         * @consolecommand dumplogs - Prints the latest logs to the console.
-         */
-        if (message.equalsIgnoreCase("printlogs")) {
-            com.gmt2001.Console.out.println("[CONSOLE] Executing printlogs");
-
-            GenerateLogs.printLogs();
-            return;
-        }
-
-        /**
          * @consolecommand debuglog - Prints all debug lines to a file.
          */
         if (message.equalsIgnoreCase("debuglog")) {
             com.gmt2001.Console.out.println("[CONSOLE] Executing debuglog: Enable Debug Mode - Log Only");
 
             PhantomBot.setDebuggingLogOnly(true);
-            return;
-        }
-
-        /**
-         * @consolecommand save - Forces the database to save.
-         */
-        if (message.equalsIgnoreCase("save")) {
-            com.gmt2001.Console.out.println("[CONSOLE] Executing save");
-
-            dataStore.SaveAll(true);
             return;
         }
 
@@ -653,254 +775,501 @@ public class ConsoleEventHandler implements Listener {
         }
 
         /**
-         * @consolecommand apioauth - Updates the API oauth.
-         */
-        if (message.equalsIgnoreCase("apioauth")) {
-            System.out.print("Please enter you're oauth token that you generated from https://phantombot.github.io/PhantomBot/oauth/ while logged as the caster: ");
-
-            String apiOAuth = System.console().readLine().trim();
-
-            PhantomBot.instance().getProperties().setProperty("apioauth", apiOAuth);
-            changed = true;
-        }
-
-        /**
          * @consolecommand mysqlsetup - Sets up MySQL.
          */
         if (message.equalsIgnoreCase("mysqlsetup")) {
-            try {
-                System.out.println("");
-                System.out.println("PhantomBot MySQL setup.");
-                System.out.println("");
+            startTransaction();
+            System.out.println("");
+            System.out.println("PhantomBot MySQL setup.");
+            System.out.println("");
 
-                System.out.print("Please enter your MySQL host name: ");
-                String mySqlHost = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("mysqlhost", mySqlHost);
+            System.out.print("Please enter your MySQL host name: ");
+            String mySqlHost = com.gmt2001.Console.in.readLine().trim();
+            transaction.setProperty("mysqlhost", mySqlHost);
 
-                System.out.print("Please enter your MySQL port: ");
-                String mySqlPort = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("mysqlport", mySqlPort);
+            System.out.print("Please enter your MySQL port: ");
+            String mySqlPort = com.gmt2001.Console.in.readLine().trim();
+            transaction.setProperty("mysqlport", mySqlPort);
 
-                System.out.print("Please enter your MySQL db name: ");
-                String mySqlName = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("mysqlname", mySqlName);
+            System.out.print("Please enter your MySQL db name: ");
+            String mySqlName = com.gmt2001.Console.in.readLine().trim();
+            transaction.setProperty("mysqlname", mySqlName);
 
-                System.out.print("Please enter a username for MySQL: ");
-                String mySqlUser = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("mysqluser", mySqlUser);
+            System.out.print("Please enter a username for MySQL: ");
+            String mySqlUser = com.gmt2001.Console.in.readLine().trim();
+            transaction.setProperty("mysqluser", mySqlUser);
 
-                System.out.print("Please enter a password for MySQL: ");
-                String mySqlPass = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("mysqlpass", mySqlPass);
+            System.out.print("Please enter a password for MySQL: ");
+            String mySqlPass = com.gmt2001.Console.in.readLine().trim();
+            transaction.setProperty("mysqlpass", mySqlPass);
 
-                String dataStoreType = "MySQLStore";
-                PhantomBot.instance().getProperties().setProperty("datastore", dataStoreType);
+            String dataStoreType = "MySQLStore";
+            transaction.setProperty("datastore", dataStoreType);
 
-                com.gmt2001.Console.out.println("PhantomBot MySQL setup done, PhantomBot will exit.");
-                changed = true;
-            } catch (NullPointerException ex) {
-                com.gmt2001.Console.err.printStackTrace(ex);
-            }
+            com.gmt2001.Console.out.println("PhantomBot MySQL setup done, PhantomBot will exit.");
+            finishTransaction();
+            return;
         }
 
         /**
          * @consolecommand streamlabssetup - Sets up StreamLabs.
          */
         if (message.equalsIgnoreCase("streamlabssetup")) {
-            try {
-                System.out.println("");
-                System.out.println("PhantomBot StreamLabs setup.");
-                System.out.println("");
+            System.out.println("");
+            System.out.println("PhantomBot StreamLabs setup.");
+            System.out.println("");
 
-                System.out.println("Please register an application with StreamLabs");
-                System.out.println("Instructions are available at https://dev.streamlabs.com/docs/register-your-application");
-                System.out.println("Make sure you whitelist the broadcaster");
-                System.out.println("You should set the Redirect URI to: http://localhost");
+            System.out.println("Please register an application with StreamLabs");
+            System.out
+                    .println("Instructions are available at https://dev.streamlabs.com/docs/register-your-application");
+            System.out.println("Make sure you whitelist the broadcaster");
+            System.out.println("You should set the Redirect URI to: http://localhost");
 
-                System.out.println("");
-                System.out.print("From the StreamLabs Application Settings page, please paste or enter your StreamLabs Client ID: ");
-                String twitchAlertsClientId = System.console().readLine().trim();
+            System.out.println("");
+            System.out.print(
+                    "From the StreamLabs Application Settings page, please paste or enter your StreamLabs Client ID: ");
+            String twitchAlertsClientId = com.gmt2001.Console.in.readLine().trim();
 
-                System.out.println("");
-                System.out.print("From the StreamLabs Application Settings page, please paste or enter your StreamLabs Client Secret: ");
-                String twitchAlertsClientSecret = System.console().readLine().trim();
+            System.out.println("");
+            System.out.print(
+                    "From the StreamLabs Application Settings page, please paste or enter your StreamLabs Client Secret: ");
+            String twitchAlertsClientSecret = com.gmt2001.Console.in.readLine().trim();
 
-                System.out.println("");
-                System.out.print("From the StreamLabs Application Settings page, please paste or enter your StreamLabs Redirect URI: ");
-                String twitchAlertsRedirectURI = System.console().readLine().trim();
+            System.out.println("");
+            System.out.print(
+                    "From the StreamLabs Application Settings page, please paste or enter your StreamLabs Redirect URI: ");
+            String twitchAlertsRedirectURI = com.gmt2001.Console.in.readLine().trim();
 
-                System.out.println("");
-                System.out.println("Use this link to authorize to the account you want to read donations from");
-                System.out.println("NOTE: It is normal to see either a blank page, or a browser 'Can not connect' page after approving the authorization");
-                System.out.println("");
-                System.out.println("https://www.streamlabs.com/api/v1.0/authorize?client_id=" + twitchAlertsClientId + "&redirect_uri=" + twitchAlertsRedirectURI + "&response_type=code&scope=donations.read");
-                System.out.println("");
-                System.out.println("Please paste or enter the access code from the URL in your browser's address bar. You can also just paste the entire URL: ");
-                String twitchAlertsKickback = System.console().readLine().trim();
+            System.out.println("");
+            System.out.println("Use this link to authorize to the account you want to read donations from");
+            System.out.println(
+                    "NOTE: It is normal to see either a blank page, or a browser 'Can not connect' page after approving the authorization");
+            System.out.println("");
+            System.out.println("https://www.streamlabs.com/api/v1.0/authorize?client_id=" + twitchAlertsClientId
+                    + "&redirect_uri=" + twitchAlertsRedirectURI + "&response_type=code&scope=donations.read");
+            System.out.println("");
+            System.out.println(
+                    "Please paste or enter the access code from the URL in your browser's address bar. You can also just paste the entire URL: ");
+            String twitchAlertsKickback = com.gmt2001.Console.in.readLine().trim();
 
-                if (twitchAlertsKickback.contains("code=")) {
-                    twitchAlertsKickback = twitchAlertsKickback.substring(twitchAlertsKickback.indexOf("code=") + 5);
-                }
-
-                if (twitchAlertsKickback.contains("&")) {
-                    twitchAlertsKickback = twitchAlertsKickback.substring(0, twitchAlertsKickback.indexOf("&"));
-                }
-
-                HttpResponse res = HttpRequest.getData(HttpRequest.RequestType.POST, "https://streamlabs.com/api/v1.0/token",
-                        "grant_type=authorization_code&client_id=" + twitchAlertsClientId + "&client_secret=" + twitchAlertsClientSecret
-                        + "&redirect_uri=" + twitchAlertsRedirectURI + "&code=" + twitchAlertsKickback,
-                        new HashMap<>());
-
-                if (res.success) {
-                    JSONObject j = new JSONObject(res.content);
-                    String twitchAlertsKey = j.getString("access_token");
-                    PhantomBot.instance().getProperties().setProperty("twitchalertskey", twitchAlertsKey);
-
-                    System.out.println("PhantomBot StreamLabs setup done, PhantomBot will exit.");
-                    changed = true;
-                } else if (res.httpCode == 400) {
-                    JSONObject e = new JSONObject(res.content);
-                    System.out.println("PhantomBot StreamLabs setup failed");
-                    System.err.println(e.getString("error"));
-                    System.err.println(e.getString("message"));
-                } else {
-                    System.out.println("PhantomBot StreamLabs setup failed");
-                    System.err.println(res.httpCode);
-                    System.err.println(res.content);
-                    System.err.println(res.exception);
-                }
-            } catch (JSONException | NullPointerException ex) {
-                com.gmt2001.Console.err.printStackTrace(ex);
+            if (twitchAlertsKickback.contains("code=")) {
+                twitchAlertsKickback = twitchAlertsKickback.substring(twitchAlertsKickback.indexOf("code=") + 5);
             }
+
+            if (twitchAlertsKickback.contains("&")) {
+                twitchAlertsKickback = twitchAlertsKickback.substring(0, twitchAlertsKickback.indexOf('&'));
+            }
+
+            HttpResponse res = HttpRequest.getData(HttpRequest.RequestType.POST,
+                    "https://streamlabs.com/api/v1.0/token",
+                    "grant_type=authorization_code&client_id=" + twitchAlertsClientId + "&client_secret="
+                            + twitchAlertsClientSecret
+                            + "&redirect_uri=" + twitchAlertsRedirectURI + "&code=" + twitchAlertsKickback,
+                    new HashMap<>());
+
+            if (res.success) {
+                JSONObject j = new JSONObject(res.content);
+                String twitchAlertsKey = j.getString("access_token");
+                startTransaction();
+                transaction.setProperty("twitchalertskey", twitchAlertsKey);
+
+                System.out.println("PhantomBot StreamLabs setup done, PhantomBot will exit.");
+                finishTransaction();
+            } else if (res.httpCode == 400) {
+                JSONObject e = new JSONObject(res.content);
+                System.out.println("PhantomBot StreamLabs setup failed");
+                System.err.println(e.getString("error"));
+                System.err.println(e.optString("error_description", "no error description"));
+                System.err.println(e.optString("message", "no message"));
+            } else {
+                System.out.println("PhantomBot StreamLabs setup failed");
+                System.err.println(res.httpCode);
+                System.err.println(res.content);
+                System.err.println(res.exception);
+            }
+            return;
         }
 
         /**
          * @consolecommand tipeeestreamsetup - Sets up TipeeeStream.
          */
         if (message.equalsIgnoreCase("tipeeestreamsetup")) {
-            try {
-                System.out.println("");
-                System.out.println("PhantomBot TipeeeStream setup.");
-                System.out.println("");
+            System.out.println("");
+            System.out.println("PhantomBot TipeeeStream setup.");
+            System.out.println("");
 
-                System.out.print("Please enter your TipeeeStream Api OAuth: ");
-                String tipeeeStreamOAuth = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("tipeeestreamkey", tipeeeStreamOAuth);
+            System.out.print("Please enter your TipeeeStream Api OAuth: ");
+            String tipeeeStreamOAuth = com.gmt2001.Console.in.readLine().trim();
+            startTransaction();
+            transaction.setProperty("tipeeestreamkey", tipeeeStreamOAuth);
 
-                System.out.println("PhantomBot TipeeeStream setup done, PhantomBot will exit.");
-                changed = true;
-            } catch (NullPointerException ex) {
-                com.gmt2001.Console.err.printStackTrace(ex);
-            }
+            System.out.println("PhantomBot TipeeeStream setup done, PhantomBot will exit.");
+            finishTransaction();
+            return;
         }
 
         /**
          * @consolecommand panelsetup - Sets up the panel.
          */
         if (message.equalsIgnoreCase("panelsetup")) {
-            try {
-                System.out.println("");
-                System.out.println("PhantomBot Web Panel setup.");
-                System.out.println("Note: Do not use any ascii characters in your username or password.");
-                System.out.println("");
+            System.out.println("");
+            System.out.println("PhantomBot Web Panel setup.");
+            System.out.println("Note: Do not use any ascii characters in your username or password.");
+            System.out.println("");
 
-                System.out.print("Please enter a username of your choice: ");
-                String panelUsername = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("paneluser", panelUsername);
+            System.out.print("Please enter a username of your choice: ");
+            String panelUsername = com.gmt2001.Console.in.readLine().trim();
+            startTransaction();
+            transaction.setProperty("paneluser", panelUsername);
 
-                System.out.print("Please enter a password of your choice: ");
-                String panelPassword = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("panelpassword", panelPassword);
+            System.out.print("Please enter a password of your choice: ");
+            String panelPassword = com.gmt2001.Console.in.readLine().trim();
+            transaction.setProperty("panelpassword", panelPassword);
 
-                System.out.println("PhantomBot Web Panel setup done, PhantomBot will exit.");
-                changed = true;
-            } catch (NullPointerException ex) {
-                com.gmt2001.Console.err.printStackTrace(ex);
-            }
-        }
-
-        /**
-         * @consolecommand twittersetup - Sets up Twitter.
-         */
-        if (message.equalsIgnoreCase("twittersetup")) {
-            try {
-                System.out.println("");
-                System.out.println("PhantomBot Twitter setup.");
-                System.out.println("");
-
-                System.out.print("Please enter your Twitter username: ");
-                String twitterUsername = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("twitterUser", twitterUsername);
-
-                System.out.print("Please enter your consumer key: ");
-                String twitterConsumerToken = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("twitter_consumer_key", twitterConsumerToken);
-
-                System.out.print("Please enter your consumer secret: ");
-                String twitterConsumerSecret = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("twitter_consumer_secret", twitterConsumerSecret);
-
-                System.out.print("Please enter your access token: ");
-                String twitterAccessToken = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("twitter_access_token", twitterAccessToken);
-
-                System.out.print("Please enter your access token secret: ");
-                String twitterSecretToken = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("twitter_secret_token", twitterSecretToken);
-
-                System.out.println("PhantomBot Twitter setup done, PhantomBot will exit.");
-                changed = true;
-            } catch (NullPointerException ex) {
-                com.gmt2001.Console.err.printStackTrace(ex);
-            }
+            System.out.println("PhantomBot Web Panel setup done, PhantomBot will exit.");
+            finishTransaction();
+            return;
         }
 
         /**
          * @consolecommand ytsetup - Sets up YouTube API Key
          */
         if (message.equalsIgnoreCase("ytsetup")) {
-            try {
-                System.out.println("");
-                System.out.println("PhantomBot YouTube API Key Setup");
-                System.out.println("");
-                System.out.println("Please enter the YouTube API key that you have acquired: ");
-                String youtubeKey = System.console().readLine().trim();
-                PhantomBot.instance().getProperties().setProperty("youtubekey", youtubeKey);
-                System.out.println("PhantomBot YouTube API key setup done, PhantomBot will exit.");
-                changed = true;
-            } catch (NullPointerException ex) {
-                com.gmt2001.Console.err.printStackTrace(ex);
-            }
+            System.out.println("");
+            System.out.println("PhantomBot YouTube API Key Setup");
+            System.out.println("");
+            System.out.println("Please enter the YouTube API key that you have acquired: ");
+            String youtubeKey = com.gmt2001.Console.in.readLine().trim();
+            startTransaction();
+            transaction.setProperty("youtubekey", youtubeKey);
+            System.out.println("PhantomBot YouTube API key setup done, PhantomBot will exit.");
+            finishTransaction();
+            return;
         }
 
-        // Check to see if any settings have been changed.
-        if (changed) {
-            CaselessProperties outputProperties = new CaselessProperties() {
-                @Override
-                public synchronized Enumeration<Object> keys() {
-                    return Collections.enumeration(new TreeSet<>(super.keySet()));
-                }
-            };
+        /**
+         * @consolecommand blueskysetup - Links a Bluesky account with an app password.
+         */
+        if (message.equalsIgnoreCase("blueskysetup")) {
+            SocialPlatform platform = SocialPlatformRegistry.instance().get("bluesky");
+            System.out.println("");
+            System.out.println("PhantomBot Bluesky setup");
+            System.out.println("Make an app password in Bluesky under Settings > Privacy and security > App passwords.");
+            System.out.println("");
+            System.out.print("Please enter the Bluesky handle, such as name.bsky.social: ");
+            String handle = com.gmt2001.Console.in.readLine().trim();
+            System.out.print("Please enter the app password (not the account password): ");
+            String password = com.gmt2001.Console.in.readLine().trim();
+            System.out.print("Please enter the service address, or leave it empty for bsky.social: ");
+            String service = com.gmt2001.Console.in.readLine().trim();
+            SocialPostResult result = platform.link(handle, password, service);
 
-            try {
-                try (FileOutputStream outputStream = new FileOutputStream("./config/botlogin.txt")) {
-                    outputProperties.putAll(PhantomBot.instance().getProperties());
-                    outputProperties.store(outputStream, "PhantomBot Configuration File");
-                }
-
-                dataStore.SaveAll(true);
-
-                com.gmt2001.Console.out.println("");
-                com.gmt2001.Console.out.println("Changes have been saved, now exiting PhantomBot.");
-                com.gmt2001.Console.out.println("");
-                PhantomBot.exitOK();
-            } catch (IOException ex) {
-                com.gmt2001.Console.err.printStackTrace(ex);
+            if (result.success()) {
+                System.out.println("Bluesky linked as " + platform.getAccountName() + ".");
+            } else {
+                System.out.println("Bluesky was not linked: " + (result.detail() != null ? result.detail() : result.error()));
             }
             return;
         }
 
-        // Handle any other commands.
-        PhantomBot.instance().handleCommand(PhantomBot.instance().getBotName(), event.getMessage());
+        /**
+         * @consolecommand reposttest (platform) (accounts) - Sends a fake repost rewards event, by default for Bluesky.
+         */
+        if (message.equalsIgnoreCase("reposttest")) {
+            int first = argument != null && SocialPlatformRegistry.instance().get(argument[0]) != null ? 1 : 0;
+            SocialPlatform platform = SocialPlatformRegistry.instance().get(first == 1 ? argument[0] : "bluesky");
+            int count = argument == null ? 0 : argument.length - first;
+            String[] accountIds = new String[count];
+            String[] accountNames = new String[count];
+
+            for (int i = 0; i < count; i++) {
+                String accountId = platform.resolveAccountId(argument[first + i]);
+                accountNames[i] = argument[first + i];
+                accountIds[i] = accountId != null ? accountId : argument[first + i];
+            }
+
+            com.gmt2001.Console.out.println("[CONSOLE] Executing reposttest (" + platform.getId() + ", " + String.join(", ", accountNames) + ")");
+            EventBus.instance().postAsync(new SocialRepostersEvent(platform.getId(), accountIds, accountNames));
+            return;
+        }
+
+        /**
+         * @consolecommand socialtest (platform) (type) (account) (text) - Sends a fake social media activity event, by default a Bluesky mention.
+         */
+        if (message.equalsIgnoreCase("socialtest")) {
+            int first = argument != null && SocialPlatformRegistry.instance().get(argument[0]) != null ? 1 : 0;
+            SocialPlatform platform = SocialPlatformRegistry.instance().get(first == 1 ? argument[0] : "bluesky");
+            String type = argument != null && argument.length > first ? argument[first].toLowerCase() : "mention";
+            String account = argument != null && argument.length > first + 1 ? argument[first + 1] : "test.bsky.social";
+            String text = argument != null && argument.length > first + 2
+                    ? String.join(" ", Arrays.copyOfRange(argument, first + 2, argument.length)) : "This is a test";
+            String url = platform.getProfileUrl().isEmpty() ? "https://bsky.app" : platform.getProfileUrl();
+
+            com.gmt2001.Console.out.println("[CONSOLE] Executing socialtest (" + platform.getId() + ", " + type + ", " + account + ")");
+            String pollType = type.equals("post") ? "posts" : type.equals("repost") ? "reposts" : "mentions";
+            EventBus.instance().postAsync(new SocialActivityEvent(platform.getId(), pollType, new SocialItem(type, "test", "did:example:" + account,
+                    account, account, text, url, Instant.now().toString())));
+            return;
+        }
+
+        /**
+         * @consolecommand dumpheap - Creates a heap dump
+         */
+        if (message.equalsIgnoreCase("dumpheap")) {
+            Reflect.dumpHeap();
+            com.gmt2001.Console.out.println("Heap Dump Completed");
+            return;
+        }
+
+        /**
+         * @consolecommand dumpthreads - Creates a thread dump
+         */
+        if (message.equalsIgnoreCase("dumpthreads")) {
+            Reflect.dumpThreads();
+            com.gmt2001.Console.out.println("Thread Dump Completed");
+            return;
+        }
+
+        if (message.equalsIgnoreCase("paneluser")) {
+            if (argument == null || argument.length < 1 || argument[0].isBlank() || argument[1].isBlank()) {
+                com.gmt2001.Console.out.println("Invalid paneluser command");
+                com.gmt2001.Console.out.println("Usage: paneluser add/delete/enable/disable/resetpassword/resetpermission username");
+                return;
+            }
+            /**
+             * @consolecommand paneluser add username - Creates a new panel user with full
+             *                 access to all panel sections if the user does not exist and
+             *                 prints the randomly generated password
+             */
+            if (argument[0].equalsIgnoreCase("add")) {
+                PanelUserHandler.PanelMessage response = PanelUserHandler.createNewUser(argument[1], false);
+                com.gmt2001.Console.out.println("Password for new user " + argument[1] + " is:");
+                com.gmt2001.Console.out.println(response.getMessage());
+                return;
+            }
+            /**
+             * @consolecommand paneluser delete username - Deletes a panel user if the user
+             *                 exists
+             */
+            else if (argument[0].equalsIgnoreCase("delete")) {
+                PanelUserHandler.PanelMessage response = PanelUserHandler.deleteUser(argument[1]);
+                com.gmt2001.Console.out.println(response.getMessage());
+                return;
+            }
+            /**
+             * @consolecommand paneluser enable username - Enables a panel user if the user
+             *                 exists
+             */
+            else if (argument[0].equalsIgnoreCase("enable")) {
+                PanelUserHandler.PanelMessage response = PanelUserHandler.editUser(argument[1], null,
+                        (Map<String, PanelUserHandler.Permission>) null, true);
+                com.gmt2001.Console.out.println(response.getMessage());
+                return;
+            }
+            /**
+             * @consolecommand paneluser enable username - Disables a panel user if the user
+             *                 exists
+             */
+            else if (argument[0].equalsIgnoreCase("disable")) {
+                PanelUserHandler.PanelMessage response = PanelUserHandler.editUser(argument[1], null,
+                        (Map<String, PanelUserHandler.Permission>) null, false);
+                com.gmt2001.Console.out.println(response.getMessage());
+                return;
+            }
+            /**
+             * @consolecommand paneluser resetpassword username - Resets a panel users
+             *                 password and removes their passkeys if the user exists and
+             *                 prints the new and randomly generated password
+             */
+            else if (argument[0].equalsIgnoreCase("resetpassword")) {
+                PanelUserHandler.PanelMessage response = PanelUserHandler.resetPassword(argument[1]);
+                com.gmt2001.Console.out.println("New password for user " + argument[1] + " is:");
+                com.gmt2001.Console.out.println(response.getMessage());
+                return;
+            }
+            /**
+             * @consolecommand paneluser resetpermission username - Gives a panel user full
+             *                 access to all panel sections if the user exists
+             */
+            else if (argument[0].equalsIgnoreCase("resetpermission")) {
+                PanelUserHandler.PanelMessage response = PanelUserHandler.editUser(argument[1], null,
+                        PanelUserHandler.getFullAccessPermissions(), false);
+                com.gmt2001.Console.out.println("New password for user " + argument[1] + " is:");
+                com.gmt2001.Console.out.println(response.getMessage());
+                return;
+            }
+            return;
+        }
+
+        /**
+         * @consolecommand convertdb (old db type) - Converts an existing DB to the
+         *                 current DB type. Parameter should be one of: H2, MySQL,
+         *                 MariaDB, SQLite
+         */
+        if (message.equalsIgnoreCase("convertdb")) {
+            if (argument == null || argument.length == 0 || argument[0].isBlank()
+                    || !List.of("h2", "mysql", "mariadb", "sqlite").contains(argument[0].toLowerCase())) {
+                com.gmt2001.Console.err.println("[convertdb] Usage: convertdb (oldDBType)");
+                com.gmt2001.Console.err.println(
+                        "[convertdb] Must specify the old DB type to convert from: H2, MySQL, MariaDB, or SQLite");
+                return;
+            }
+            String oldtype = argument[0].trim().toLowerCase();
+            String datastoretype = CaselessProperties.instance().getProperty("datastore", "h2store");
+            String datastoretypel = datastoretype.toLowerCase();
+            if ((datastoretypel.startsWith("mysql") && oldtype.equals("mariadb"))
+                    || (datastoretypel.startsWith("maria") && oldtype.equals("mysql"))) {
+                com.gmt2001.Console.err.println(
+                        "[convertdb] Can not convert directly between MySQL and Maria DB. Please convert to H2 first");
+                return;
+            }
+
+            if (datastoretypel.startsWith(oldtype)) {
+                com.gmt2001.Console.err.println("[convertdb] Can not convert " + datastoretype + " to itself");
+                return;
+            }
+
+            com.gmt2001.Console.out.println(
+                    "[convertdb] Converting " + oldtype + " to " + datastoretype + ". This may take some time...");
+
+            Datastore2 newdb = Datastore2.instance();
+            Datastore2 olddb;
+
+            switch (oldtype) {
+                case "h2":
+                    olddb = new H2Store2();
+                    break;
+                case "mysql":
+                    olddb = new MySQLStore2();
+                    break;
+                case "mariadb":
+                    olddb = new MariaDBStore2();
+                    break;
+                case "sqlite":
+                    olddb = new SQLiteStore2();
+                    break;
+                default:
+                    com.gmt2001.Console.err.println("[convertdb] Failed to find a DataStore2 type for " + oldtype);
+                    return;
+            }
+
+            try {
+                if (olddb.supportsBackup()) {
+                    try {
+                        com.gmt2001.Console.out
+                                .println("[convertdb] Creating a backup of the " + oldtype + " DB before starting...");
+                        olddb.backup();
+                    } catch (Exception ex) {
+                        com.gmt2001.Console.err.printStackTrace(ex);
+                    }
+                }
+                if (newdb.supportsBackup()) {
+                    try {
+                        com.gmt2001.Console.out
+                                .println(
+                                        "[convertdb] Creating a backup of the " + datastoretype + " DB before starting...");
+                        newdb.backup();
+                    } catch (Exception ex) {
+                        com.gmt2001.Console.err.printStackTrace(ex);
+                    }
+                }
+                olddb.tables().stream()
+                        .filter(t -> t.getName().toLowerCase().startsWith(DataStore.PREFIX.toLowerCase())
+                                || t.getName().toLowerCase().startsWith(Datastore2.PREFIX.toLowerCase()))
+                        .forEach(oldtable -> {
+                            com.gmt2001.Console.out
+                                    .println("[convertdb] Converting table " + oldtable.getName() + "...");
+                            try {
+                                Optional<Table<?>> onewtable = newdb.tables().stream()
+                                        .filter(t -> t.getName().equalsIgnoreCase(oldtable.getName())).findFirst();
+                                if (!onewtable.isPresent()) {
+                                    CreateTableElementListStep cr = newdb.dslContext()
+                                            .createTableIfNotExists(oldtable.getName());
+                                    org.jooq.Field<?>[] fields = oldtable.fields();
+                                    for (org.jooq.Field<?> field : fields) {
+                                        DataType<?> type = field.getDataType();
+                                        if (type.getSQLDataType() == SQLDataType.VARCHAR && type.length() > 2000) {
+                                            cr.column(field.getName(), Datastore2.instance().longTextDataType());
+                                        } else {
+                                            cr.column(field);
+                                        }
+                                    }
+                                    UniqueKey<?> primaryKey = oldtable.getPrimaryKey();
+                                    if (primaryKey != null && !primaryKey.getFields().isEmpty()) {
+                                        cr = cr.primaryKey(primaryKey.getFields());
+                                    }
+                                    com.gmt2001.Console.debug.println(cr.getSQL());
+                                    cr.execute();
+                                    List<Index> indexes = oldtable.getIndexes();
+                                    if (!indexes.isEmpty()) {
+                                        indexes.forEach(index -> {
+                                            CreateIndexStep cii;
+                                            if (index.getUnique()) {
+                                                cii = newdb.dslContext().createUniqueIndexIfNotExists(index.getName());
+                                            } else {
+                                                cii = newdb.dslContext().createIndexIfNotExists(index.getName());
+                                            }
+                                            CreateIndexIncludeStep ci = cii.on(oldtable.getName(),
+                                                    index.getFields().stream().map(f -> f.getName()).toList());
+                                            DDLQuery cid = ci;
+                                            if (index.getWhere() != null) {
+                                                cid = ci.where(index.getWhere());
+                                            }
+                                            cid.execute();
+                                        });
+                                    }
+                                    newdb.invalidateTableCache();
+                                    onewtable = newdb.tables().stream()
+                                            .filter(t -> t.getName().equalsIgnoreCase(oldtable.getName())).findFirst();
+                                }
+                                final Table<?> newtable = onewtable.get();
+                                newdb.dslContext().transaction(c -> {
+                                    try {
+                                        c.dsl().deleteFrom(newtable).execute();
+                                        olddb.dslContext()
+                                                .selectFrom(oldtable).fetch().stream().forEach(oldrecord -> {
+                                                    try {
+                                                        final org.jooq.Record newrecord = newdb.dslContext()
+                                                                .newRecord(newtable);
+                                                        newrecord.fromArray(oldrecord.intoArray());
+                                                        newrecord.changed(true);
+                                                        c.dsl().insertInto(newtable).set(newrecord).execute();
+                                                    } catch (Exception ex) {
+                                                        com.gmt2001.Console.err.printStackTrace(ex);
+                                                    }
+                                                });
+                                    } catch (Exception ex) {
+                                        com.gmt2001.Console.err.printStackTrace(ex);
+                                    }
+                                });
+                            } catch (Exception ex) {
+                                com.gmt2001.Console.err.printStackTrace(ex);
+                            }
+                        });
+                for (int i = 0; i < 5; i++) {
+                    com.gmt2001.Console.out.println("");
+                    com.gmt2001.Console.out.println("[convertdb] Conversion complete...");
+                    com.gmt2001.Console.out.println("[convertdb] Please restart the bot to load the new data");
+                    com.gmt2001.Console.out.println("");
+                }
+            } catch (Exception ex) {
+                com.gmt2001.Console.err.printStackTrace(ex);
+            }
+
+            return;
+        }
+
+        String botname;
+
+        if (PhantomBot.instance() != null) {
+            if (PhantomBot.instance().getBotName() != null) {
+                botname = PhantomBot.instance().getBotName();
+            } else {
+                botname = "__NOBOTNAME";
+            }
+
+            // Handle any other commands.
+            PhantomBot.instance().handleCommand(botname, event.getMessage());
+        }
     }
 }

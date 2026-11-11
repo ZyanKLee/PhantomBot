@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,12 +17,15 @@
 package com.gmt2001.httpwsserver;
 
 import com.gmt2001.httpwsserver.auth.WsAuthenticationHandler;
+import com.gmt2001.httpwsserver.auth.WsSharedRWTokenAuthenticationHandler;
+
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
@@ -49,9 +52,17 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
      */
     static Map<String, WsFrameHandler> wsFrameHandlers = new ConcurrentHashMap<>();
     /**
-     * Represents the {@code ATTR_URI} attribute
+     * Represents the {@code ATTR_URI} attribute, which stores the URI the client has connected to
      */
     public static final AttributeKey<String> ATTR_URI = AttributeKey.valueOf("uri");
+    /**
+     * Represents the {@code ATTR_FRAME_HANDLER} attribute, which stores the {@link WsFrameHandler} that processes frames for this client
+     */
+    public static final AttributeKey<WsFrameHandler> ATTR_FRAME_HANDLER = AttributeKey.valueOf("frameHandler");
+    /**
+     * Represents the {@code ATTR_ALLOW_NON_SSL} attribute, which stores if the client is allowed to bypass SSL requirements
+     */
+    public static final AttributeKey<String> ATTR_ALLOW_NON_SSL = AttributeKey.valueOf("allowNonSsl");
     /**
      * Represents a {@link Queue} containing all current WS Sessions
      */
@@ -68,12 +79,12 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
      * Handles incoming WebSocket frames and passes them to the appropriate {@link WsFrameHandler}
      *
      * @param ctx The {@link ChannelHandlerContext} of the session
-     * @param req The {@link WebSocketFrame} containing the request frame
+     * @param frame The {@link WebSocketFrame} containing the request frame
      * @throws Exception Passes any thrown exceptions up the stack
      */
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, WebSocketFrame frame) throws Exception {
-        WsFrameHandler h = wsFrameHandlers.get(ctx.channel().attr(ATTR_URI).get());
+        WsFrameHandler h = ctx.channel().attr(ATTR_FRAME_HANDLER).get();
 
         if (h.getAuthHandler().checkAuthorization(ctx, frame)) {
             h.handleFrame(ctx, frame);
@@ -91,11 +102,11 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
      */
     @Override
     public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
-        if (evt instanceof HandshakeComplete) {
-            HandshakeComplete hc = (HandshakeComplete) evt;
+        if (evt instanceof HandshakeComplete hc) {
             String ruri = determineWsFrameHandler(hc.requestUri());
+            WsFrameHandler h = wsFrameHandlers.get(ruri);
 
-            if (ruri.isBlank()) {
+            if (ruri.isBlank() || h == null) {
                 JSONStringer jsonObject = new JSONStringer();
                 jsonObject.object().key("errors").array().object()
                         .key("status").value("404")
@@ -109,7 +120,22 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
                 ctx.close();
             } else {
                 com.gmt2001.Console.debug.println("200 WS: " + hc.requestUri() + "   Remote: [" + ctx.channel().remoteAddress().toString() + "]");
+                boolean allowNonSsl = hc.requestHeaders().contains(HTTPWSServer.HEADER_X_FORWARDED_HOST) || hc.requestHeaders().contains(HTTPWSServer.HEADER_CF_RAY);
+
+                if (!allowNonSsl) {
+                    QueryStringDecoder qsd = new QueryStringDecoder(hc.requestUri());
+                    for (String u : WsSslErrorHandler.ALLOWNONSSLPATHS) {
+                        if (qsd.path().startsWith(u)) {
+                            allowNonSsl = true;
+                            break;
+                        }
+                    }
+                }
+
                 ctx.channel().attr(ATTR_URI).set(ruri);
+                ctx.channel().attr(ATTR_FRAME_HANDLER).set(h);
+                ctx.channel().attr(ATTR_ALLOW_NON_SSL).set(allowNonSsl ? "true" : "false");
+                h.getAuthHandler().checkAuthorizationHeaders(ctx, hc.requestHeaders());
                 ctx.channel().attr(WsAuthenticationHandler.ATTR_AUTHENTICATED).setIfAbsent(Boolean.FALSE);
                 ctx.channel().closeFuture().addListener((ChannelFutureListener) (ChannelFuture f) -> {
                     WS_SESSIONS.remove(f.channel());
@@ -142,7 +168,7 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
         String bestMatch = "";
 
         if (uri.contains("..")) {
-            return null;
+            return bestMatch;
         }
 
         for (String k : wsFrameHandlers.keySet()) {
@@ -175,6 +201,16 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
     }
 
     /**
+     * Creates and prepares a text-type {@link WebSocketFrame} for transmission from a {@link JSONStringer}
+     *
+     * @param json The {@link JSONStringer} to send
+     * @return A {@link WebSocketFrame} that is ready to transmit
+     */
+    public static WebSocketFrame prepareTextWebSocketResponse(JSONStringer json) {
+        return new TextWebSocketFrame(json.toString());
+    }
+
+    /**
      * Creates and prepares a binary-type {@link WebSocketFrame} for transmission
      *
      * @param content The binary content to send
@@ -187,7 +223,7 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
     /**
      * Creates and prepares a Close {@link WebSocketFrame} for transmission
      *
-     * @param content The {@link WebSocketCloseStatus} to send
+     * @param status The {@link WebSocketCloseStatus} to send
      * @return A {@link WebSocketFrame} that is ready to transmit
      */
     public static WebSocketFrame prepareCloseWebSocketFrame(WebSocketCloseStatus status) {
@@ -197,7 +233,7 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
     /**
      * Creates and prepares a Close {@link WebSocketFrame} for transmission
      *
-     * @param content The close status code to send
+     * @param status The close status code to send
      * @param reason The reason string to send
      * @return A {@link WebSocketFrame} that is ready to transmit
      */
@@ -213,7 +249,27 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
      * @param resframe The {@link WebSocketFrame} to transmit
      */
     public static void sendWsFrame(ChannelHandlerContext ctx, WebSocketFrame reqframe, WebSocketFrame resframe) {
-        ctx.channel().writeAndFlush(resframe);
+        sendWsFrame(ctx.channel(), reqframe, resframe);
+    }
+
+    /**
+     * Transmits a {@link WebSocketFrame} back to the client
+     *
+     * @param ch The {@link Channel} of the connection
+     * @param reqframe The {@link WebSocketFrame} containing the request
+     * @param resframe The {@link WebSocketFrame} to transmit
+     */
+    public static void sendWsFrame(Channel ch, WebSocketFrame reqframe, WebSocketFrame resframe) {
+        ch.writeAndFlush(resframe);
+    }
+
+    /**
+     * Transmits a {@link WebSocketFrame} to all authenticated clients who are not read-only
+     *
+     * @param resframe The {@link WebSocketFrame} to transmit
+     */
+    public static void broadcastWsFrame(WebSocketFrame resframe) {
+        broadcastWsFrame(resframe, false);
     }
 
     /**
@@ -221,12 +277,29 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
      *
      * @param resframe The {@link WebSocketFrame} to transmit
      */
-    public static void broadcastWsFrame(WebSocketFrame resframe) {
+    public static void broadcastWsFrame(WebSocketFrame resframe, boolean includeReadOnly) {
         WS_SESSIONS.forEach((c) -> {
             if (c.attr(WsAuthenticationHandler.ATTR_AUTHENTICATED).get()) {
-                c.writeAndFlush(resframe.copy());
+                if (!includeReadOnly && c.attr(WsSharedRWTokenAuthenticationHandler.ATTR_IS_READ_ONLY).get() && c.attr(WsSharedRWTokenAuthenticationHandler.ATTR_AUTH_USER).get() == null) {
+                    com.gmt2001.Console.debug.println("Did not broadcast to client [" + c.remoteAddress().toString() + "] Authenticated: " + (c.attr(WsAuthenticationHandler.ATTR_AUTHENTICATED).get() ? "t" : "f") + "   Read-only: t");
+                    return;
+                }
+                com.gmt2001.Console.debug.println("Broadcast to client [" + c.remoteAddress().toString() + "]");
+                sendWsFrame(c, null, resframe.copy());
             }
         });
+
+        HTTPWSServer.releaseObj(resframe);
+    }
+
+    /**
+     * Transmits a {@link WebSocketFrame} to all authenticated clients that are connected to a specific URI and are not read-only
+     *
+     * @param uri The URI to filter clients by for the broadcast
+     * @param resframe The {@link WebSocketFrame} to transmit
+     */
+    public static void broadcastWsFrame(String uri, WebSocketFrame resframe) {
+        broadcastWsFrame(uri, resframe, false);
     }
 
     /**
@@ -234,25 +307,34 @@ public class WebSocketFrameHandler extends SimpleChannelInboundHandler<WebSocket
      *
      * @param uri The URI to filter clients by for the broadcast
      * @param resframe The {@link WebSocketFrame} to transmit
+     * @param includeReadOnly Whether to include read-only clients
      */
-    public static void broadcastWsFrame(String uri, WebSocketFrame resframe) {
+    public static void broadcastWsFrame(String uri, WebSocketFrame resframe, boolean includeReadOnly) {
         com.gmt2001.Console.debug.println("Broadcasting frame to Uri [" + uri + "]");
         WS_SESSIONS.forEach((c) -> {
             if (c.attr(WsAuthenticationHandler.ATTR_AUTHENTICATED).get() && c.attr(ATTR_URI).get().equals(uri)) {
+                if (!includeReadOnly && c.attr(WsSharedRWTokenAuthenticationHandler.ATTR_IS_READ_ONLY).get() && c.attr(WsSharedRWTokenAuthenticationHandler.ATTR_AUTH_USER).get() == null) {
+                    com.gmt2001.Console.debug.println("Did not broadcast to client [" + c.remoteAddress().toString() + "] Authenticated: " + (c.attr(WsAuthenticationHandler.ATTR_AUTHENTICATED).get() ? "t" : "f") + "   Uri: " + c.attr(ATTR_URI).get() + "   Uri match: " + (c.attr(ATTR_URI).get().equals(uri) ? "t" : "f") + "   Read-only: t");
+                    return;
+                }
                 com.gmt2001.Console.debug.println("Broadcast to client [" + c.remoteAddress().toString() + "]");
-                c.writeAndFlush(resframe.copy());
+                sendWsFrame(c, null, resframe.copy());
             } else {
                 com.gmt2001.Console.debug.println("Did not broadcast to client [" + c.remoteAddress().toString() + "] Authenticated: " + (c.attr(WsAuthenticationHandler.ATTR_AUTHENTICATED).get() ? "t" : "f") + "   Uri: " + c.attr(ATTR_URI).get() + "   Uri match: " + (c.attr(ATTR_URI).get().equals(uri) ? "t" : "f"));
             }
         });
+
+        HTTPWSServer.releaseObj(resframe);
     }
 
     static void closeAllWsSessions() {
         WebSocketFrame resframe = WebSocketFrameHandler.prepareCloseWebSocketFrame(WebSocketCloseStatus.ENDPOINT_UNAVAILABLE);
         WS_SESSIONS.forEach((c) -> {
-            c.writeAndFlush(resframe.copy());
+            sendWsFrame(c, null, resframe.copy());
             c.close();
         });
+
+        HTTPWSServer.releaseObj(resframe);
     }
 
     public static Queue<Channel> getWsSessions(String uri) {

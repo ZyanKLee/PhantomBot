@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 phantombot.github.io/PhantomBot
+ * Copyright (C) 2016-2026 phantombot.github.io/PhantomBot
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,7 +15,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-(function() {
+/* global Packages */
+
+(function () {
     var keywords = [];
 
     /*
@@ -23,12 +25,12 @@
      */
     function loadKeywords() {
         var keys = $.inidb.GetKeyList('keywords', ''),
-            i;
+                i;
 
         keywords = [];
 
         for (i = 0; i < keys.length; i++) {
-            var json = JSON.parse($.inidb.get('keywords', keys[i]));
+            var json = JSON.parse($.getIniDbString('keywords', keys[i]));
 
             if (json.isRegex) {
                 try {
@@ -45,8 +47,9 @@
 
     /*
      * @event ircChannelMessage
+     * @usestransformers global twitch commandevent keywordevent noevent
      */
-    $.bind('ircChannelMessage', function(event) {
+    $.bind('ircChannelMessage', function (event) {
         function executeKeyword(json, event) {
             // Make sure the keyword isn't on cooldown.
             if ($.coolDownKeywords.get(json.keyword, sender) > 0) {
@@ -61,15 +64,18 @@
                 var CommandEvent = Packages.tv.phantombot.event.command.CommandEvent;
                 var cmdEvent = new CommandEvent(sender, "keyword_" + json.keyword, event.getMessage(), event.getTags());
                 json.response = $.replace(json.response, '(keywordcount)', '(keywordcount ' + $.escapeTags(json.keyword) + ')');
-                $.say($.tags(cmdEvent, json.response, false));
+                var tag = $.transformers.tags(cmdEvent, json.response, ['twitch', ['commandevent', 'keywordevent', 'noevent']]);
+                if (tag !== null) {
+                    $.say(tag);
+                }
             }
         }
 
         var message = event.getMessage(),
-            sender = event.getSender(),
-            messagePartsLower = message.toLowerCase().split(' '),
-            messageParts = message.split(' '),
-            json;
+                sender = event.getSender(),
+                messagePartsLower = message.toLowerCase().split(' '),
+                messageParts = message.split(' '),
+                json;
 
         // Don't say the keyword if someone tries to remove it.
         if (message.startsWith('!keyword')) {
@@ -86,7 +92,7 @@
                 }
             } else {
                 var str = '',
-                  caseAdjustedMessageParts = messageParts;
+                        caseAdjustedMessageParts = messageParts;
                 if (!json.isCaseSensitive) {
                     caseAdjustedMessageParts = messagePartsLower;
                 }
@@ -106,19 +112,19 @@
     /*
      * @event command
      */
-    $.bind('command', function(event) {
+    $.bind('command', function (event) {
         var sender = event.getSender(),
-            command = event.getCommand(),
-            argString = event.getArguments().trim(),
-            args = event.getArgs(),
-            action = args[0],
-            subAction = args[1],
-            actionArgs = args[2];
+                command = event.getCommand(),
+                argString = event.getArguments().trim(),
+                args = event.getArgs(),
+                action = args[0],
+                subAction = args[1],
+                actionArgs = args[2];
 
         /*
          * @commandpath keyword - Base command for keyword options
          */
-        if (command.equalsIgnoreCase('keyword')) {
+        if ($.equalsIgnoreCase(command, 'keyword')) {
             if (action === undefined) {
                 $.say($.whisperPrefix(sender) + $.lang.get('keywordhandler.keyword.usage'));
                 return;
@@ -127,17 +133,17 @@
             /*
              * @commandpath keyword add [keyword] [response] - Adds a keyword and a response, use regex: at the start of the response to use regex.
              */
-            if (action.equalsIgnoreCase('add')) {
+            if ($.equalsIgnoreCase(action, 'add')) {
                 var isRegex = false,
-                    isCaseSensitive = false,
-                    keyword = null,
-                    response = null;
+                        isCaseSensitive = false,
+                        keyword = null,
+                        response = null;
 
                 for (var i = 1; i < args.length; i++) {
-                    if (keyword == null) {
-                        if (args[i].equalsIgnoreCase('--regex')) {
+                    if (keyword === null) {
+                        if ($.equalsIgnoreCase(args[i], '--regex')) {
                             isRegex = true;
-                        } else if (args[i].equalsIgnoreCase('--case-sensitive')) {
+                        } else if ($.equalsIgnoreCase(args[i], '--case-sensitive')) {
                             isCaseSensitive = true;
                         } else {
                             keyword = $.jsString(args[i]);
@@ -148,7 +154,7 @@
                     }
                 }
 
-                if (response == null) {
+                if (response === null) {
                     $.say($.whisperPrefix(sender) + $.lang.get('keywordhandler.add.usage'));
                     return;
                 }
@@ -172,7 +178,7 @@
             /*
              * @commandpath keyword remove [keyword] - Removes a given keyword
              */
-            if (action.equalsIgnoreCase('remove')) {
+            if ($.equalsIgnoreCase(action, 'remove')) {
                 if (subAction === undefined) {
                     $.say($.whisperPrefix(sender) + $.lang.get('keywordhandler.remove.usage'));
                     return;
@@ -189,7 +195,7 @@
             /*
              * @commandpath keyword cooldown [keyword] [seconds] - Sets a cooldown on the keyword. Use -1 to remove it. If you use the command: tag and you have a cooldown on that command it will use that cooldown
              */
-            if (action.equalsIgnoreCase('cooldown')) {
+            if ($.equalsIgnoreCase(action, 'cooldown')) {
                 if (subAction === undefined || isNaN(parseInt(args[2]))) {
                     $.say($.whisperPrefix(sender) + $.lang.get('keywordhandler.cooldown.usage'));
                     return;
@@ -215,20 +221,20 @@
     /*
      * @event initReady
      */
-    $.bind('initReady', function() {
-        $.registerChatCommand('./handlers/keywordHandler.js', 'keyword', 1);
+    $.bind('initReady', function () {
+        $.registerChatCommand('./handlers/keywordHandler.js', 'keyword', $.PERMISSION.Admin);
 
-        $.registerChatSubcommand('keyword', 'add', 1);
-        $.registerChatSubcommand('keyword', 'remove', 1);
-        $.registerChatSubcommand('keyword', 'cooldown', 1);
+        $.registerChatSubcommand('keyword', 'add', $.PERMISSION.Admin);
+        $.registerChatSubcommand('keyword', 'remove', $.PERMISSION.Admin);
+        $.registerChatSubcommand('keyword', 'cooldown', $.PERMISSION.Admin);
         loadKeywords();
     });
 
     /*
      * @event webPanelSocketUpdate
      */
-    $.bind('webPanelSocketUpdate', function(event) {
-        if (event.getScript().equalsIgnoreCase('./handlers/keywordHandler.js')) {
+    $.bind('webPanelSocketUpdate', function (event) {
+        if ($.equalsIgnoreCase(event.getScript(), './handlers/keywordHandler.js')) {
             loadKeywords();
         }
     });
